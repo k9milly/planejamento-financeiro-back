@@ -2,13 +2,17 @@ import { useCallback, useEffect, useState } from 'react';
 import { api } from './lib/api';
 import { NOMES_MESES } from './lib/formato';
 import { FormularioLancamento } from './components/FormularioLancamento';
+import { GastosFixos } from './components/GastosFixos';
 import { GastosPorCategoria } from './components/GastosPorCategoria';
 import { TabelaLancamentos } from './components/TabelaLancamentos';
 import { TotaisMes } from './components/TotaisMes';
 import { TotalGuardado } from './components/TotalGuardado';
+import { Wishlist } from './components/Wishlist';
 import type {
   Ano,
   Categoria,
+  Desejo,
+  GastoFixo,
   Lancamento,
   NovoLancamento,
   ResumoAno,
@@ -21,6 +25,8 @@ export default function App() {
   const [resumo, setResumo] = useState<ResumoAno | null>(null);
   const [lancamentos, setLancamentos] = useState<Lancamento[]>([]);
   const [categorias, setCategorias] = useState<Categoria[]>([]);
+  const [gastosFixos, setGastosFixos] = useState<GastoFixo[]>([]);
+  const [desejos, setDesejos] = useState<Desejo[]>([]);
   const [erro, setErro] = useState('');
   const [carregando, setCarregando] = useState(true);
 
@@ -48,12 +54,17 @@ export default function App() {
   const recarregar = useCallback(async () => {
     if (anoAtual === null) return;
     try {
-      const [novoResumo, novosLancamentos] = await Promise.all([
-        api.resumo(anoAtual),
-        api.listarLancamentos(anoAtual, mesAtual),
-      ]);
+      const [novoResumo, novosLancamentos, novosGastos, novosDesejos] =
+        await Promise.all([
+          api.resumo(anoAtual),
+          api.listarLancamentos(anoAtual, mesAtual),
+          api.listarGastosFixos(anoAtual),
+          api.listarWishlist(anoAtual),
+        ]);
       setResumo(novoResumo);
       setLancamentos(novosLancamentos);
+      setGastosFixos(novosGastos);
+      setDesejos(novosDesejos);
       setErro('');
     } catch (e) {
       setErro(e instanceof Error ? e.message : 'Falha ao carregar o mês.');
@@ -75,6 +86,32 @@ export default function App() {
     await api.excluirLancamento(anoAtual, id);
     await recarregar();
   }
+
+  /** Envolve uma escrita: executa, recarrega tudo e mostra o erro na barra. */
+  function acao<A extends unknown[]>(
+    operacao: (ano: number, ...args: A) => Promise<unknown>,
+  ) {
+    return async (...args: A) => {
+      if (anoAtual === null) return;
+      try {
+        await operacao(anoAtual, ...args);
+        await recarregar();
+      } catch (e) {
+        setErro(e instanceof Error ? e.message : 'A operação falhou.');
+        throw e;
+      }
+    };
+  }
+
+  const alternarGastoFixo = acao(
+    async (ano: number, gasto: GastoFixo, pago: boolean) => {
+      if (pago) {
+        await api.pagarGastoFixo(ano, gasto.id, mesAtual);
+      } else {
+        await api.desfazerGastoFixo(ano, gasto.id, mesAtual);
+      }
+    },
+  );
 
   if (carregando) {
     return <Aviso texto="Carregando…" />;
@@ -156,6 +193,27 @@ export default function App() {
             <TotalGuardado resumo={resumo} />
             <TotaisMes mes={mes} />
             <GastosPorCategoria mes={mes} />
+
+            <GastosFixos
+              gastos={gastosFixos}
+              categorias={categorias}
+              mes={mesAtual}
+              somenteLeitura={arquivado}
+              aoCriar={acao(api.criarGastoFixo)}
+              aoAlternar={alternarGastoFixo}
+              aoExcluir={acao(api.excluirGastoFixo)}
+            />
+
+            <div className="lg:col-span-2">
+              <Wishlist
+                desejos={desejos}
+                totalGuardado={resumo.total_guardado}
+                somenteLeitura={arquivado}
+                aoCriar={acao(api.criarDesejo)}
+                aoAtualizar={acao(api.atualizarDesejo)}
+                aoExcluir={acao(api.excluirDesejo)}
+              />
+            </div>
 
             <div className="lg:col-span-3">
               {!arquivado && (

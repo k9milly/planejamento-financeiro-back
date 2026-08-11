@@ -30,16 +30,18 @@ Cada mês é uma página com quatro blocos:
 | **Total guardado** | Quanto foi para a reserva em cada mês, mais o total acumulado |
 | **Total de {mês}** | Entradas, saídas, guardado no mês e saldo de fechamento |
 | **Gastos por categoria** | Ranking das saídas do mês, com barra proporcional |
+| **Gastos fixos** | Despesas recorrentes do mês, com marcação de pago/pendente |
+| **Wishlist** | Desejos com soma dos marcados, comparada com a reserva |
 | **{Mês}** | Todos os lançamentos: data, tipo, categoria, descrição e valor |
 
-Além disso:
+Marcar um gasto fixo como pago gera o lançamento de saída correspondente e
+atualiza saldo e gastos por categoria na hora; desmarcar o remove.
 
-- **Gastos fixos** — despesas recorrentes que podem virar lançamentos com um
-  clique, com controle de pago/pendente por mês.
-- **Wishlist** — lista de desejos com soma dos itens marcados, para planejar o
-  uso da reserva.
-- **Arquivamento de ano** — ao fechar um ano, ele fica somente-leitura e o ano
-  seguinte é criado automaticamente com os saldos de fechamento como abertura.
+A wishlist responde à pergunta que motiva a lista: somando os itens marcados,
+diz se cabem no que está guardado ou quanto falta.
+
+**Arquivamento de ano** — ao fechar um ano, ele fica somente-leitura e o ano
+seguinte é criado automaticamente com os saldos de fechamento como abertura.
 
 ## Conceitos do domínio
 

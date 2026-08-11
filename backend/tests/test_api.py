@@ -175,6 +175,31 @@ class TestCategorias:
 
 
 class TestGastosFixos:
+    def test_lista_vem_ordenada_por_vencimento(self, cliente, ano):
+        for descricao, dia in [("Internet", 10), ("Academia", 1), ("Dízimo", 6)]:
+            cliente.post(
+                "/anos/2026/gastos-fixos",
+                json={"descricao": descricao, "valor": "50", "dia_vencimento": dia},
+            )
+        lista = cliente.get("/anos/2026/gastos-fixos").json()
+        assert [g["descricao"] for g in lista] == ["Academia", "Dízimo", "Internet"]
+
+    def test_lista_traz_a_situacao_de_cada_mes(self, cliente, ano):
+        """Cobre o joinedload da coleção `meses`, que já quebrou uma vez."""
+        gasto = cliente.post(
+            "/anos/2026/gastos-fixos", json={"descricao": "Internet", "valor": "54.17"}
+        ).json()
+        cliente.post(f"/anos/2026/gastos-fixos/{gasto['id']}/meses/4/pagar")
+        cliente.post(f"/anos/2026/gastos-fixos/{gasto['id']}/meses/5/pagar")
+
+        lista = cliente.get("/anos/2026/gastos-fixos").json()
+        # Um único gasto, sem duplicação causada pelo join.
+        assert len(lista) == 1
+        assert {m["mes"]: m["situacao"] for m in lista[0]["meses"]} == {
+            4: "pago",
+            5: "pago",
+        }
+
     def test_pagar_gera_lancamento_uma_vez_so(self, cliente, ano):
         gasto = cliente.post(
             "/anos/2026/gastos-fixos",
