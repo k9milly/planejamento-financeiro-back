@@ -1,0 +1,30 @@
+# Dados financeiros pessoais — nunca versionar
+*.db
+*.sqlite
+*.sqlite3
+*.xlsx
+*.xls
+*.csv
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+*.egg-info/
+
+# Node
+node_modules/
+dist/
+.vite/
+
+# Ambiente
+.env
+.env.local
+
+# Editores e SO
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
