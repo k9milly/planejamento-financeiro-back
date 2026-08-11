@@ -20,14 +20,14 @@ export function TotaisMes({ mes }: { mes: ResumoMes }) {
         <Linha rotulo="Rendimentos" valor={moeda(rendimento)} />
       )}
 
-      <div className="mt-3 border-t-2 border-slate-200 pt-3">
+      <div className="mt-3 border-t-2 border-roxo-100 pt-3 dark:border-roxo-600">
         <Linha
           rotulo="Saldo"
           valor={moeda(mes.saldo)}
           destaque
           negativo={Number(mes.saldo) < 0}
         />
-        <p className="mt-1 text-xs text-slate-400">
+        <p className="mt-1 text-xs text-roxo-300">
           Abertura do mês: {moeda(mes.saldo_inicial)}
         </p>
       </div>

@@ -19,7 +19,7 @@ interface Props {
 const ESTILO_IMPORTANCIA: Record<Importancia, string> = {
   alta: 'bg-rose-100 text-rose-700',
   media: 'bg-amber-100 text-amber-700',
-  baixa: 'bg-slate-100 text-slate-600',
+  baixa: 'bg-roxo-100 dark:bg-roxo-700 text-roxo-500 dark:text-roxo-200',
 };
 
 const ORDEM: Record<Importancia, number> = { alta: 0, media: 1, baixa: 2 };
@@ -66,7 +66,7 @@ export function Wishlist({
   }
 
   const campo =
-    'rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-slate-400 focus:outline-none';
+    'rounded-lg border border-roxo-100 dark:border-roxo-700 px-3 py-2 text-sm focus:border-roxo-400 dark:focus:border-roxo-300 focus:outline-none';
 
   return (
     <Card
@@ -75,7 +75,7 @@ export function Wishlist({
         !somenteLeitura && (
           <button
             onClick={() => setAberto(!aberto)}
-            className="text-xs font-medium text-slate-500 hover:text-slate-900"
+            className="text-xs font-medium text-roxo-400 dark:text-roxo-200 hover:text-roxo-600 dark:hover:text-roxo-50"
           >
             {aberto ? 'Cancelar' : '+ Novo'}
           </button>
@@ -115,7 +115,7 @@ export function Wishlist({
           </div>
           <button
             type="submit"
-            className="w-full rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700"
+            className="w-full rounded-lg bg-roxo-500 dark:bg-roxo-400 px-4 py-2 text-sm font-medium text-white hover:bg-roxo-400"
           >
             Adicionar
           </button>
@@ -124,9 +124,9 @@ export function Wishlist({
       )}
 
       {pendentes.length === 0 ? (
-        <p className="text-sm text-slate-400">Nenhum desejo na lista.</p>
+        <p className="text-sm text-roxo-300">Nenhum desejo na lista.</p>
       ) : (
-        <ul className="divide-y divide-slate-100">
+        <ul className="divide-y divide-roxo-100 dark:divide-roxo-700">
           {pendentes.map((item) => (
             <li key={item.id} className="group flex items-center gap-3 py-2">
               <input
@@ -134,11 +134,11 @@ export function Wishlist({
                 checked={item.somar}
                 disabled={somenteLeitura}
                 onChange={() => void aoAtualizar(item.id, { somar: !item.somar })}
-                className="h-4 w-4 rounded border-slate-300"
+                className="h-4 w-4 rounded border-roxo-200 dark:border-roxo-600"
                 aria-label={`Somar ${item.desejo}`}
               />
               <div className="min-w-0 flex-1">
-                <p className="truncate text-sm text-slate-700">{item.desejo}</p>
+                <p className="truncate text-sm text-roxo-600 dark:text-roxo-100">{item.desejo}</p>
               </div>
               <span
                 className={`rounded px-1.5 py-0.5 text-[10px] font-medium uppercase ${
@@ -147,13 +147,13 @@ export function Wishlist({
               >
                 {item.importancia}
               </span>
-              <span className="tabular-nums text-sm font-medium text-slate-900">
+              <span className="tabular-nums text-sm font-medium text-roxo-700 dark:text-roxo-50">
                 {moeda(item.valor)}
               </span>
               {!somenteLeitura && (
                 <button
                   onClick={() => void aoExcluir(item.id)}
-                  className="text-xs text-slate-300 opacity-0 hover:text-rose-600 group-hover:opacity-100"
+                  className="text-xs text-roxo-200 opacity-0 hover:text-rose-600 group-hover:opacity-100"
                   aria-label={`Excluir ${item.desejo}`}
                 >
                   ✕
@@ -165,15 +165,15 @@ export function Wishlist({
       )}
 
       {marcados.length > 0 && (
-        <div className="mt-3 border-t-2 border-slate-200 pt-3">
+        <div className="mt-3 border-t-2 border-roxo-100 dark:border-roxo-700 pt-3">
           <div className="flex justify-between text-sm">
-            <span className="text-slate-600">
+            <span className="text-roxo-500 dark:text-roxo-200">
               Selecionado
-              <span className="ml-1 text-xs text-slate-400">
+              <span className="ml-1 text-xs text-roxo-300">
                 ({marcados.length})
               </span>
             </span>
-            <span className="tabular-nums font-semibold text-slate-900">
+            <span className="tabular-nums font-semibold text-roxo-700 dark:text-roxo-50">
               {moeda(totalMarcado)}
             </span>
           </div>

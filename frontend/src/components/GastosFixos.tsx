@@ -68,7 +68,7 @@ export function GastosFixos({
   }
 
   const campo =
-    'rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-slate-400 focus:outline-none';
+    'rounded-lg border border-roxo-100 dark:border-roxo-700 px-3 py-2 text-sm focus:border-roxo-400 dark:focus:border-roxo-300 focus:outline-none';
 
   return (
     <Card
@@ -77,7 +77,7 @@ export function GastosFixos({
         !somenteLeitura && (
           <button
             onClick={() => setAberto(!aberto)}
-            className="text-xs font-medium text-slate-500 hover:text-slate-900"
+            className="text-xs font-medium text-roxo-400 dark:text-roxo-200 hover:text-roxo-600 dark:hover:text-roxo-50"
           >
             {aberto ? 'Cancelar' : '+ Novo'}
           </button>
@@ -130,7 +130,7 @@ export function GastosFixos({
           </div>
           <button
             type="submit"
-            className="w-full rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700"
+            className="w-full rounded-lg bg-roxo-500 dark:bg-roxo-400 px-4 py-2 text-sm font-medium text-white hover:bg-roxo-400"
           >
             Adicionar
           </button>
@@ -139,9 +139,9 @@ export function GastosFixos({
       )}
 
       {ativos.length === 0 ? (
-        <p className="text-sm text-slate-400">Nenhum gasto fixo cadastrado.</p>
+        <p className="text-sm text-roxo-300">Nenhum gasto fixo cadastrado.</p>
       ) : (
-        <ul className="divide-y divide-slate-100">
+        <ul className="divide-y divide-roxo-100 dark:divide-roxo-700">
           {ativos.map((gasto) => {
             const pago = estaPago(gasto);
             return (
@@ -151,28 +151,28 @@ export function GastosFixos({
                   checked={pago}
                   disabled={somenteLeitura}
                   onChange={() => void aoAlternar(gasto, !pago)}
-                  className="h-4 w-4 rounded border-slate-300"
+                  className="h-4 w-4 rounded border-roxo-200 dark:border-roxo-600"
                   aria-label={`${gasto.descricao} pago`}
                 />
                 <div className="min-w-0 flex-1">
                   <p
                     className={`truncate text-sm ${
-                      pago ? 'text-slate-400 line-through' : 'text-slate-700'
+                      pago ? 'text-roxo-300 line-through' : 'text-roxo-600 dark:text-roxo-100'
                     }`}
                   >
                     {gasto.descricao}
                   </p>
-                  <p className="text-xs text-slate-400">
+                  <p className="text-xs text-roxo-300">
                     vence dia {gasto.dia_vencimento}
                   </p>
                 </div>
-                <span className="tabular-nums text-sm font-medium text-slate-900">
+                <span className="tabular-nums text-sm font-medium text-roxo-700 dark:text-roxo-50">
                   {moeda(gasto.valor)}
                 </span>
                 {!somenteLeitura && (
                   <button
                     onClick={() => void aoExcluir(gasto.id)}
-                    className="text-xs text-slate-300 opacity-0 hover:text-rose-600 group-hover:opacity-100"
+                    className="text-xs text-roxo-200 opacity-0 hover:text-rose-600 group-hover:opacity-100"
                     aria-label={`Excluir ${gasto.descricao}`}
                   >
                     ✕
@@ -185,14 +185,14 @@ export function GastosFixos({
       )}
 
       {ativos.length > 0 && (
-        <div className="mt-3 flex justify-between border-t-2 border-slate-200 pt-3 text-sm">
-          <span className="text-slate-600">
+        <div className="mt-3 flex justify-between border-t-2 border-roxo-100 dark:border-roxo-700 pt-3 text-sm">
+          <span className="text-roxo-500 dark:text-roxo-200">
             Falta pagar
-            <span className="ml-1 text-xs text-slate-400">
+            <span className="ml-1 text-xs text-roxo-300">
               ({ativos.length - pagos.length} de {ativos.length})
             </span>
           </span>
-          <span className="tabular-nums font-semibold text-slate-900">
+          <span className="tabular-nums font-semibold text-roxo-700 dark:text-roxo-50">
             {moeda(pendente)}
           </span>
         </div>

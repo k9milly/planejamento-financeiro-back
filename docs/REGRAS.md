@@ -82,8 +82,12 @@ invalidar um `destino` que era válido antes.
 - O ano é único.
 - Arquivar um ano:
   1. marca-o como somente-leitura;
-  2. cria o ano seguinte com os saldos de fechamento como abertura, **se ele
-     ainda não existir** — arquivar nunca sobrescreve dados já lançados.
+  2. prepara o ano seguinte com os saldos de fechamento como abertura:
+     - se ele **não existe**, é criado;
+     - se existe e **ainda não tem lançamentos**, seus saldos de abertura são
+       atualizados — eram placeholders zerados de um ano criado
+       antecipadamente para planejamento;
+     - se existe e **já tem lançamentos**, é preservado intacto.
 - Um ano arquivado continua totalmente legível; qualquer escrita retorna 409.
 - Desarquivar reverte o estado, mas **não** recalcula os saldos de abertura do
   ano seguinte. Se houver edição após desarquivar, ajuste-os manualmente.
