@@ -5,6 +5,7 @@ import type {
   Categoria,
   Desejo,
   GastoFixo,
+  Importancia,
   Lancamento,
   NovoLancamento,
   ResumoAno,
@@ -102,6 +103,23 @@ export const api = {
   listarGastosFixos: (ano: number) =>
     requisitar<GastoFixo[]>(`/anos/${ano}/gastos-fixos`),
 
+  criarGastoFixo: (
+    ano: number,
+    dados: {
+      descricao: string;
+      valor: string;
+      dia_vencimento: number;
+      categoria_id?: number | null;
+    },
+  ) =>
+    requisitar<GastoFixo>(`/anos/${ano}/gastos-fixos`, {
+      method: 'POST',
+      body: JSON.stringify(dados),
+    }),
+
+  excluirGastoFixo: (ano: number, id: number) =>
+    requisitar<void>(`/anos/${ano}/gastos-fixos/${id}`, { method: 'DELETE' }),
+
   pagarGastoFixo: (ano: number, id: number, mes: number) =>
     requisitar<Lancamento>(`/anos/${ano}/gastos-fixos/${id}/meses/${mes}/pagar`, {
       method: 'POST',
@@ -116,4 +134,32 @@ export const api = {
 
   totalWishlist: (ano: number) =>
     requisitar<TotalWishlist>(`/anos/${ano}/wishlist/total`),
+
+  criarDesejo: (
+    ano: number,
+    dados: { desejo: string; valor: string; importancia: Importancia },
+  ) =>
+    requisitar<Desejo>(`/anos/${ano}/wishlist`, {
+      method: 'POST',
+      body: JSON.stringify(dados),
+    }),
+
+  atualizarDesejo: (
+    ano: number,
+    id: number,
+    dados: Partial<{
+      desejo: string;
+      valor: string;
+      importancia: Importancia;
+      somar: boolean;
+      comprado: boolean;
+    }>,
+  ) =>
+    requisitar<Desejo>(`/anos/${ano}/wishlist/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(dados),
+    }),
+
+  excluirDesejo: (ano: number, id: number) =>
+    requisitar<void>(`/anos/${ano}/wishlist/${id}`, { method: 'DELETE' }),
 };

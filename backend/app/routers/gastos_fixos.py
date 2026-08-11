@@ -27,12 +27,13 @@ router = APIRouter(prefix="/anos/{ano}/gastos-fixos", tags=["gastos fixos"])
 def listar(
     ano_ref: Ano = Depends(obter_ano), db: Session = Depends(get_db)
 ) -> list[GastoFixo]:
+    # A Query legada já deduplica as linhas do joinedload sozinha; `.unique()`
+    # existe só em Result, e chamá-la aqui levanta AttributeError.
     return (
         db.query(GastoFixo)
         .options(joinedload(GastoFixo.meses))
         .filter(GastoFixo.ano_id == ano_ref.id)
         .order_by(GastoFixo.dia_vencimento, GastoFixo.descricao)
-        .unique()
         .all()
     )
 
