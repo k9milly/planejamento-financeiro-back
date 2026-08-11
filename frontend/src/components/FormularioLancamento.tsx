@@ -52,7 +52,7 @@ export function FormularioLancamento({ ano, mes, categorias, aoSalvar }: Props) 
   }
 
   const campo =
-    'rounded-lg border border-slate-200 px-3 py-2 text-sm focus:border-slate-400 focus:outline-none';
+    'rounded-lg border border-roxo-100 dark:border-roxo-700 px-3 py-2 text-sm focus:border-roxo-400 dark:focus:border-roxo-300 focus:outline-none';
 
   return (
     <form onSubmit={enviar} className="mb-4 space-y-3">
@@ -129,7 +129,7 @@ export function FormularioLancamento({ ano, mes, categorias, aoSalvar }: Props) 
         <button
           type="submit"
           disabled={salvando}
-          className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700 disabled:opacity-50"
+          className="rounded-lg bg-roxo-500 dark:bg-roxo-400 px-4 py-2 text-sm font-medium text-white hover:bg-roxo-400 disabled:opacity-50"
         >
           {salvando ? 'Salvando…' : 'Adicionar'}
         </button>

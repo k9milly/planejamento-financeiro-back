@@ -1,9 +1,13 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api } from './lib/api';
 import { NOMES_MESES } from './lib/formato';
+import { useTema } from './lib/tema';
+import { BotaoTema } from './components/BotaoTema';
+import { CalendarioVencimentos } from './components/CalendarioVencimentos';
 import { FormularioLancamento } from './components/FormularioLancamento';
 import { GastosFixos } from './components/GastosFixos';
 import { GastosPorCategoria } from './components/GastosPorCategoria';
+import { GerenciadorAnos } from './components/GerenciadorAnos';
 import { TabelaLancamentos } from './components/TabelaLancamentos';
 import { TotaisMes } from './components/TotaisMes';
 import { TotalGuardado } from './components/TotalGuardado';
@@ -14,11 +18,12 @@ import type {
   Desejo,
   GastoFixo,
   Lancamento,
-  NovoLancamento,
   ResumoAno,
 } from './types/api';
 
 export default function App() {
+  const { tema, alternar } = useTema();
+
   const [anos, setAnos] = useState<Ano[]>([]);
   const [anoAtual, setAnoAtual] = useState<number | null>(null);
   const [mesAtual, setMesAtual] = useState(new Date().getMonth() + 1);
@@ -30,15 +35,20 @@ export default function App() {
   const [erro, setErro] = useState('');
   const [carregando, setCarregando] = useState(true);
 
+  const carregarAnos = useCallback(async () => {
+    const lista = await api.listarAnos();
+    setAnos(lista);
+    return lista;
+  }, []);
+
   // Carga inicial: anos disponíveis e categorias.
   useEffect(() => {
     (async () => {
       try {
         const [listaAnos, listaCategorias] = await Promise.all([
-          api.listarAnos(),
+          carregarAnos(),
           api.listarCategorias(),
         ]);
-        setAnos(listaAnos);
         setCategorias(listaCategorias);
         // Prefere um ano não arquivado; se todos estiverem, mostra o mais recente.
         const ativo = listaAnos.find((a) => !a.arquivado) ?? listaAnos[0];
@@ -49,7 +59,7 @@ export default function App() {
         setCarregando(false);
       }
     })();
-  }, []);
+  }, [carregarAnos]);
 
   const recarregar = useCallback(async () => {
     if (anoAtual === null) return;
@@ -74,18 +84,6 @@ export default function App() {
   useEffect(() => {
     void recarregar();
   }, [recarregar]);
-
-  async function adicionar(dados: NovoLancamento) {
-    if (anoAtual === null) return;
-    await api.criarLancamento(anoAtual, dados);
-    await recarregar();
-  }
-
-  async function excluir(id: number) {
-    if (anoAtual === null) return;
-    await api.excluirLancamento(anoAtual, id);
-    await recarregar();
-  }
 
   /** Envolve uma escrita: executa, recarrega tudo e mostra o erro na barra. */
   function acao<A extends unknown[]>(
@@ -113,9 +111,23 @@ export default function App() {
     },
   );
 
-  if (carregando) {
-    return <Aviso texto="Carregando…" />;
+  /** Ações que mudam a lista de anos precisam recarregá-la, não só o resumo. */
+  async function comAnos(operacao: () => Promise<unknown>, irPara?: number) {
+    try {
+      await operacao();
+      await carregarAnos();
+      if (irPara !== undefined) {
+        setAnoAtual(irPara);
+      } else {
+        await recarregar();
+      }
+      setErro('');
+    } catch (e) {
+      setErro(e instanceof Error ? e.message : 'A operação falhou.');
+    }
   }
+
+  if (carregando) return <Aviso texto="Carregando…" />;
 
   if (anoAtual === null) {
     return (
@@ -127,32 +139,25 @@ export default function App() {
   const arquivado = resumo?.arquivado ?? false;
 
   return (
-    <div className="min-h-screen bg-slate-50">
-      <header className="border-b border-slate-200 bg-white">
+    <div className="min-h-screen bg-roxo-50 dark:bg-roxo-950">
+      <header className="border-b border-roxo-100 bg-white dark:border-roxo-700 dark:bg-roxo-900">
         <div className="mx-auto flex max-w-6xl flex-wrap items-center gap-4 px-6 py-4">
-          <h1 className="text-lg font-semibold text-slate-900">
+          <h1 className="text-lg font-semibold text-roxo-600 dark:text-roxo-50">
             Planejamento Financeiro
           </h1>
 
-          <select
-            value={anoAtual}
-            onChange={(e) => setAnoAtual(Number(e.target.value))}
-            className="rounded-lg border border-slate-200 px-3 py-1.5 text-sm"
-            aria-label="Ano"
-          >
-            {anos.map((a) => (
-              <option key={a.id} value={a.ano}>
-                {a.ano}
-                {a.arquivado ? ' (arquivado)' : ''}
-              </option>
-            ))}
-          </select>
+          <GerenciadorAnos
+            anos={anos}
+            anoAtual={anoAtual}
+            aoTrocar={setAnoAtual}
+            aoCriar={(ano) => comAnos(() => api.criarAno(ano), ano)}
+            aoArquivar={(ano) => comAnos(() => api.arquivarAno(ano))}
+            aoDesarquivar={(ano) => comAnos(() => api.desarquivarAno(ano))}
+          />
 
-          {arquivado && (
-            <span className="rounded-full bg-amber-100 px-3 py-1 text-xs font-medium text-amber-800">
-              Somente leitura
-            </span>
-          )}
+          <div className="ml-auto">
+            <BotaoTema tema={tema} aoAlternar={alternar} />
+          </div>
         </div>
 
         {/* As 12 páginas do ano. */}
@@ -168,8 +173,8 @@ export default function App() {
                     aria-current={ativo ? 'page' : undefined}
                     className={`whitespace-nowrap border-b-2 px-3 py-2 text-sm ${
                       ativo
-                        ? 'border-slate-900 font-medium text-slate-900'
-                        : 'border-transparent text-slate-500 hover:text-slate-800'
+                        ? 'border-roxo-500 font-medium text-roxo-600 dark:border-roxo-200 dark:text-roxo-50'
+                        : 'border-transparent text-roxo-400 hover:text-roxo-600 dark:text-roxo-200 dark:hover:text-roxo-50'
                     }`}
                   >
                     {nome}
@@ -183,7 +188,7 @@ export default function App() {
 
       <main className="mx-auto max-w-6xl px-6 py-6">
         {erro && (
-          <p className="mb-4 rounded-lg bg-rose-50 px-4 py-3 text-sm text-rose-700">
+          <p className="mb-4 rounded-lg bg-rose-50 px-4 py-3 text-sm text-rose-700 dark:bg-rose-950 dark:text-rose-200">
             {erro}
           </p>
         )}
@@ -204,16 +209,22 @@ export default function App() {
               aoExcluir={acao(api.excluirGastoFixo)}
             />
 
-            <div className="lg:col-span-2">
-              <Wishlist
-                desejos={desejos}
-                totalGuardado={resumo.total_guardado}
-                somenteLeitura={arquivado}
-                aoCriar={acao(api.criarDesejo)}
-                aoAtualizar={acao(api.atualizarDesejo)}
-                aoExcluir={acao(api.excluirDesejo)}
-              />
-            </div>
+            <CalendarioVencimentos
+              gastos={gastosFixos}
+              ano={anoAtual}
+              mes={mesAtual}
+              somenteLeitura={arquivado}
+              aoAlternar={alternarGastoFixo}
+            />
+
+            <Wishlist
+              desejos={desejos}
+              totalGuardado={resumo.total_guardado}
+              somenteLeitura={arquivado}
+              aoCriar={acao(api.criarDesejo)}
+              aoAtualizar={acao(api.atualizarDesejo)}
+              aoExcluir={acao(api.excluirDesejo)}
+            />
 
             <div className="lg:col-span-3">
               {!arquivado && (
@@ -221,14 +232,14 @@ export default function App() {
                   ano={anoAtual}
                   mes={mesAtual}
                   categorias={categorias}
-                  aoSalvar={adicionar}
+                  aoSalvar={acao(api.criarLancamento)}
                 />
               )}
               <TabelaLancamentos
                 titulo={NOMES_MESES[mesAtual - 1]}
                 lancamentos={lancamentos}
                 somenteLeitura={arquivado}
-                aoExcluir={excluir}
+                aoExcluir={acao(api.excluirLancamento)}
               />
             </div>
           </div>
@@ -240,8 +251,8 @@ export default function App() {
 
 function Aviso({ texto }: { texto: string }) {
   return (
-    <div className="flex min-h-screen items-center justify-center bg-slate-50">
-      <p className="text-sm text-slate-500">{texto}</p>
+    <div className="flex min-h-screen items-center justify-center bg-roxo-50 dark:bg-roxo-950">
+      <p className="text-sm text-roxo-400 dark:text-roxo-200">{texto}</p>
     </div>
   );
 }

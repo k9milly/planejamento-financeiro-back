@@ -137,6 +137,40 @@ class TestArquivamento:
         assert anos[2027]["saldo_inicial_conta"] == "700.97"
         assert anos[2027]["saldo_inicial_guardado"] == "8167.36"
 
+    def test_corrige_saldos_de_ano_futuro_vazio(self, cliente, ano):
+        """Criar 2027 antecipadamente para planejar não pode travar seus saldos
+        em zero: ao arquivar 2026, a abertura de 2027 é corrigida."""
+        cliente.post("/anos", json={"ano": 2027})
+        cliente.post(
+            "/anos/2026/lancamentos",
+            json={"data": "2026-04-06", "valor": "1000", "tipo": "entrada"},
+        )
+
+        cliente.post("/anos/2026/arquivar")
+
+        anos = {a["ano"]: a for a in cliente.get("/anos").json()}
+        assert anos[2027]["saldo_inicial_conta"] == "1000.97"
+        assert anos[2027]["saldo_inicial_guardado"] == "7867.36"
+
+    def test_nao_mexe_em_ano_futuro_que_ja_tem_lancamentos(self, cliente, ano):
+        cliente.post(
+            "/anos",
+            json={"ano": 2027, "saldo_inicial_conta": "500", "saldo_inicial_guardado": "0"},
+        )
+        cliente.post(
+            "/anos/2027/lancamentos",
+            json={"data": "2027-01-05", "valor": "80", "tipo": "entrada"},
+        )
+        cliente.post(
+            "/anos/2026/lancamentos",
+            json={"data": "2026-04-06", "valor": "1000", "tipo": "entrada"},
+        )
+
+        cliente.post("/anos/2026/arquivar")
+
+        anos = {a["ano"]: a for a in cliente.get("/anos").json()}
+        assert anos[2027]["saldo_inicial_conta"] == "500.00"
+
     def test_ano_arquivado_recusa_edicao(self, cliente, ano):
         cliente.post("/anos/2026/arquivar")
         resposta = cliente.post(

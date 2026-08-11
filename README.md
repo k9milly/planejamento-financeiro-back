@@ -31,6 +31,7 @@ Cada mês é uma página com quatro blocos:
 | **Total de {mês}** | Entradas, saídas, guardado no mês e saldo de fechamento |
 | **Gastos por categoria** | Ranking das saídas do mês, com barra proporcional |
 | **Gastos fixos** | Despesas recorrentes do mês, com marcação de pago/pendente |
+| **Vencimentos** | Calendário do mês marcando o dia de cada gasto fixo |
 | **Wishlist** | Desejos com soma dos marcados, comparada com a reserva |
 | **{Mês}** | Todos os lançamentos: data, tipo, categoria, descrição e valor |
 
@@ -40,8 +41,15 @@ atualiza saldo e gastos por categoria na hora; desmarcar o remove.
 A wishlist responde à pergunta que motiva a lista: somando os itens marcados,
 diz se cabem no que está guardado ou quanto falta.
 
+O calendário e a lista operam sobre o mesmo dado: marcar em um reflete no outro.
+
 **Arquivamento de ano** — ao fechar um ano, ele fica somente-leitura e o ano
-seguinte é criado automaticamente com os saldos de fechamento como abertura.
+seguinte é preparado com os saldos de fechamento como abertura. Também dá para
+criar o próximo ano antes de arquivar, para começar a planejar: ao arquivar, os
+saldos de abertura dele são corrigidos automaticamente.
+
+**Tema claro e escuro** — alternado no botão do cabeçalho. A escolha fica salva
+no navegador; sem escolha anterior, segue a preferência do sistema.
 
 ## Conceitos do domínio
 

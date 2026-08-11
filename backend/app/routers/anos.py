@@ -54,10 +54,13 @@ def criar_ano(dados: AnoCriar, db: Session = Depends(get_db)) -> Ano:
 def arquivar_ano(
     ano_ref: Ano = Depends(obter_ano), db: Session = Depends(get_db)
 ) -> Ano:
-    """Fecha o ano e cria o próximo já com os saldos de fechamento como abertura.
+    """Fecha o ano e prepara o próximo com os saldos de fechamento como abertura.
 
-    Se o ano seguinte já existir, ele é preservado como está — arquivar não
-    sobrescreve dados que o usuário já lançou.
+    Se o ano seguinte ainda não existe, é criado. Se já existe **e ainda não
+    tem lançamentos**, seus saldos de abertura são atualizados: eles eram
+    placeholders zerados de um ano criado antecipadamente para planejamento, e
+    mantê-los produziria totais errados. Um ano seguinte que já tenha
+    lançamentos é preservado intacto.
     """
     if ano_ref.arquivado:
         raise HTTPException(
@@ -80,6 +83,9 @@ def arquivar_ano(
                 saldo_inicial_guardado=fechamento.guardado_acumulado,
             )
         )
+    elif not db.query(Lancamento).filter(Lancamento.ano_id == proximo.id).count():
+        proximo.saldo_inicial_conta = fechamento.saldo
+        proximo.saldo_inicial_guardado = fechamento.guardado_acumulado
 
     db.commit()
     db.refresh(ano_ref)

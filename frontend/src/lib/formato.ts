@@ -25,11 +25,33 @@ export const NOMES_MESES = [
   'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro',
 ] as const;
 
-/** Rótulos e cores de cada tipo, usados nas etiquetas da tabela. */
+/**
+ * Rótulos e cores de cada tipo, usados nas etiquetas da tabela.
+ *
+ * Cada tipo mantém seu matiz nos dois temas — o que muda é a luminosidade:
+ * fundo claro com texto escuro no tema claro, e o inverso no escuro.
+ */
 export const ESTILO_TIPO = {
-  entrada: { rotulo: 'Entrada', classe: 'bg-emerald-100 text-emerald-800' },
-  saida: { rotulo: 'Saída', classe: 'bg-rose-100 text-rose-800' },
-  guardado: { rotulo: 'Guardado', classe: 'bg-sky-100 text-sky-800' },
-  retirado: { rotulo: 'Retirado', classe: 'bg-amber-100 text-amber-800' },
-  rendimento: { rotulo: 'Rendimento', classe: 'bg-violet-100 text-violet-800' },
+  entrada: {
+    rotulo: 'Entrada',
+    classe:
+      'bg-emerald-100 text-emerald-800 dark:bg-emerald-900 dark:text-emerald-200',
+  },
+  saida: {
+    rotulo: 'Saída',
+    classe: 'bg-rose-100 text-rose-800 dark:bg-rose-900 dark:text-rose-200',
+  },
+  guardado: {
+    rotulo: 'Guardado',
+    classe: 'bg-sky-100 text-sky-800 dark:bg-sky-900 dark:text-sky-200',
+  },
+  retirado: {
+    rotulo: 'Retirado',
+    classe: 'bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-200',
+  },
+  rendimento: {
+    rotulo: 'Rendimento',
+    classe:
+      'bg-violet-100 text-violet-800 dark:bg-violet-900 dark:text-violet-200',
+  },
 } as const;
