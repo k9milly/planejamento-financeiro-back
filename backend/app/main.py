@@ -15,7 +15,15 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
 from app.database import criar_tabelas
-from app.routers import anos, categorias, gastos_fixos, lancamentos, wishlist
+from app.routers import (
+    anos,
+    categorias,
+    gastos_fixos,
+    importacao,
+    lancamentos,
+    regras,
+    wishlist,
+)
 
 
 @asynccontextmanager
@@ -47,6 +55,8 @@ app.include_router(categorias.router)
 app.include_router(lancamentos.router)
 app.include_router(gastos_fixos.router)
 app.include_router(wishlist.router)
+app.include_router(regras.router)
+app.include_router(importacao.router)
 
 
 @app.get("/saude", tags=["infra"], summary="Verificação de saúde")

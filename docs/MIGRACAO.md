@@ -1,3 +1,62 @@
+# Importando dados
+
+Duas origens: a planilha antiga (uma vez só, no começo) e o extrato do banco
+(sempre que quiser lançar o mês).
+
+## Extrato bancário (OFX)
+
+Baixe o extrato em **OFX** pelo aplicativo do banco e use o botão *Importar
+extrato* no cabeçalho. O fluxo tem duas etapas e **nada é gravado na primeira**.
+
+### Por que a revisão é obrigatória
+
+O extrato diz quanto entrou e saiu, mas não diz o que aquilo significa. Um Pix
+recebido pode ser salário ou a devolução de um amigo; uma transferência para a
+poupança aparece como saída, mas é `guardado` — dinheiro que continua seu, só
+trocou de carteira. Classificar isso sozinho produziria totais errados com cara
+de certos, então a tela mostra a sugestão e quem decide é você.
+
+### O que a prévia mostra
+
+| Coluna | O que faz |
+| --- | --- |
+| Incluir | Marque o que vai virar lançamento |
+| Tipo | Sugerido pelo sinal do valor; ajuste quando for transferência |
+| Categoria | Preenchida por regra, quando houver; só vale para saídas |
+| Lembrar | Cria uma regra para categorizar sozinho da próxima vez |
+
+Linhas já importadas vêm bloqueadas e desmarcadas. Linhas de outro ano vêm
+desmarcadas e sinalizadas. Uma linha com mesma data e mesmo valor de um
+lançamento existente ganha um aviso — provavelmente você já digitou aquilo à
+mão antes de importar.
+
+### Deduplicação
+
+Cada transação do OFX tem um `FITID`, o identificador que o banco dá a ela.
+Ele é gravado junto com o lançamento, então **reimportar o mesmo extrato não
+duplica nada**: as transações repetidas são reconhecidas e ignoradas. Extratos
+com períodos sobrepostos são seguros.
+
+Quando o banco não envia `FITID`, o sistema deriva um identificador estável de
+data + valor + descrição. Funciona, mas é menos confiável: duas compras
+idênticas no mesmo dia seriam vistas como a mesma.
+
+### Regras de categorização
+
+Uma regra é um trecho de texto e uma categoria: `IFOOD` → Comida. A comparação
+ignora acentos e maiúsculas. Quando mais de uma regra casa, vence a de padrão
+mais longo — `MERCADO LIVRE` ganha de `MERCADO`.
+
+A sugestão nunca é aplicada sozinha: ela só preenche a tela de revisão.
+
+### Bancos
+
+O leitor aceita OFX 1.x (SGML, o formato que os bancos brasileiros usam) e
+OFX 2.x (XML), em UTF-8 ou ISO-8859-1. Usa `MEMO` como descrição e cai para
+`NAME` quando o banco preenche só esse.
+
+---
+
 # Da planilha para o aplicativo
 
 Este documento descreve o formato da planilha de origem, como importá-la e os
@@ -36,7 +95,7 @@ varredura por nome pegaria a errada silenciosamente.
 **Nota:** `Rendimentos` sem sufixo aparecia apenas nos primeiros meses, antes de
 a distinção existir. É tratado como rendimento da reserva.
 
-## Como importar
+## Como importar os lançamentos
 
 Sempre comece simulando:
 
@@ -59,6 +118,30 @@ python -m scripts.importar_planilha "Planejamento.xlsx" --ano 2026 \
 
 O script se recusa a importar sobre um ano que já tenha lançamentos, para não
 duplicar o histórico.
+
+## Como importar os gastos fixos
+
+A tabela `GastosFixos` da planilha entra por um script próprio:
+
+```bash
+python -m scripts.importar_gastos_fixos "Planejamento.xlsx" --ano 2026 --simular
+```
+
+Os gastos entram como **modelos pendentes em todos os meses**, mesmo os que a
+planilha marca como "Pago". O motivo: os lançamentos daqueles pagamentos já
+vieram na importação dos lançamentos, e marcá-los como pagos aqui criaria um
+segundo lançamento para o mesmo dinheiro.
+
+## Mudanças de schema
+
+`create_all()` cria tabelas que faltam, mas nunca altera uma tabela existente.
+Depois de atualizar o código, rode:
+
+```bash
+python -m scripts.migrar
+```
+
+É idempotente. Faça uma cópia do `dados.db` antes, por precaução.
 
 ### Como conferir se deu certo
 

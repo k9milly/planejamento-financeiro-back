@@ -48,6 +48,11 @@ seguinte é preparado com os saldos de fechamento como abertura. Também dá par
 criar o próximo ano antes de arquivar, para começar a planejar: ao arquivar, os
 saldos de abertura dele são corrigidos automaticamente.
 
+**Importação de extrato** — envie o arquivo OFX do banco e revise as transações
+antes de gravar. Reimportar o mesmo extrato não duplica nada, e as categorias
+que você ensina uma vez são aplicadas sozinhas nas próximas importações. Veja
+[`docs/MIGRACAO.md`](docs/MIGRACAO.md#extrato-bancário-ofx).
+
 **Tema claro e escuro** — alternado no botão do cabeçalho. A escolha fica salva
 no navegador; sem escolha anterior, segue a preferência do sistema.
 

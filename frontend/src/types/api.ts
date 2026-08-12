@@ -122,3 +122,46 @@ export interface TotalWishlist {
   total_geral: string;
   quantidade_marcada: number;
 }
+
+export interface Regra {
+  id: number;
+  padrao: string;
+  categoria_id: number;
+  categoria: Categoria;
+}
+
+export interface TransacaoPrevia {
+  fitid: string;
+  data: string;
+  valor: string;
+  descricao: string;
+  tipo_sugerido: TipoLancamento;
+  categoria_sugerida_id: number | null;
+  categoria_sugerida_nome: string | null;
+  duplicado: boolean;
+  possivel_repetido: boolean;
+  fora_do_ano: boolean;
+}
+
+export interface PreviaImportacao {
+  total_lidas: number;
+  ja_importadas: number;
+  transacoes: TransacaoPrevia[];
+}
+
+export interface TransacaoConfirmar {
+  fitid: string;
+  data: string;
+  valor: string;
+  tipo: TipoLancamento;
+  destino?: DestinoRendimento | null;
+  categoria_id?: number | null;
+  descricao?: string;
+  aprender_padrao?: string | null;
+}
+
+export interface ResultadoImportacao {
+  importadas: number;
+  ignoradas_duplicadas: number;
+  regras_criadas: number;
+}

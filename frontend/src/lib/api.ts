@@ -8,8 +8,12 @@ import type {
   Importancia,
   Lancamento,
   NovoLancamento,
+  PreviaImportacao,
+  Regra,
+  ResultadoImportacao,
   ResumoAno,
   TotalWishlist,
+  TransacaoConfirmar,
 } from '../types/api';
 
 const BASE = import.meta.env.VITE_API_URL ?? 'http://localhost:8000';
@@ -25,11 +29,25 @@ export class ErroApi extends Error {
   }
 }
 
-async function requisitar<T>(caminho: string, init?: RequestInit): Promise<T> {
-  const resposta = await fetch(`${BASE}${caminho}`, {
+function requisitar<T>(caminho: string, init?: RequestInit): Promise<T> {
+  return requisitarBruto<T>(caminho, {
     ...init,
     headers: { 'Content-Type': 'application/json', ...init?.headers },
   });
+}
+
+/**
+ * Igual a `requisitar`, mas sem impor o Content-Type.
+ *
+ * Necessário para o upload do extrato: com FormData, o navegador precisa
+ * definir o cabeçalho ele mesmo para incluir o `boundary` do multipart. Fixar
+ * `application/json` ali faria o servidor recusar o arquivo.
+ */
+async function requisitarBruto<T>(
+  caminho: string,
+  init?: RequestInit,
+): Promise<T> {
+  const resposta = await fetch(`${BASE}${caminho}`, init);
 
   if (!resposta.ok) {
     // O FastAPI devolve {detail: "..."} ou {detail: [{msg: "..."}]} conforme o
@@ -162,4 +180,26 @@ export const api = {
 
   excluirDesejo: (ano: number, id: number) =>
     requisitar<void>(`/anos/${ano}/wishlist/${id}`, { method: 'DELETE' }),
+
+  listarRegras: () => requisitar<Regra[]>('/regras'),
+
+  excluirRegra: (id: number) =>
+    requisitar<void>(`/regras/${id}`, { method: 'DELETE' }),
+
+  /** Envia o extrato e recebe a prévia. Nada é gravado nesta chamada. */
+  previaOfx: async (ano: number, arquivo: File) => {
+    const corpo = new FormData();
+    corpo.append('arquivo', arquivo);
+    // Sem Content-Type manual: o navegador precisa gerar o boundary do multipart.
+    return requisitarBruto<PreviaImportacao>(
+      `/anos/${ano}/importacao/ofx/previa`,
+      { method: 'POST', body: corpo },
+    );
+  },
+
+  confirmarOfx: (ano: number, transacoes: TransacaoConfirmar[]) =>
+    requisitar<ResultadoImportacao>(`/anos/${ano}/importacao/ofx/confirmar`, {
+      method: 'POST',
+      body: JSON.stringify({ transacoes }),
+    }),
 };

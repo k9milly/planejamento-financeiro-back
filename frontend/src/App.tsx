@@ -8,6 +8,7 @@ import { FormularioLancamento } from './components/FormularioLancamento';
 import { GastosFixos } from './components/GastosFixos';
 import { GastosPorCategoria } from './components/GastosPorCategoria';
 import { GerenciadorAnos } from './components/GerenciadorAnos';
+import { ImportarExtrato } from './components/ImportarExtrato';
 import { TabelaLancamentos } from './components/TabelaLancamentos';
 import { TotaisMes } from './components/TotaisMes';
 import { TotalGuardado } from './components/TotalGuardado';
@@ -34,6 +35,7 @@ export default function App() {
   const [desejos, setDesejos] = useState<Desejo[]>([]);
   const [erro, setErro] = useState('');
   const [carregando, setCarregando] = useState(true);
+  const [importando, setImportando] = useState(false);
 
   const carregarAnos = useCallback(async () => {
     const lista = await api.listarAnos();
@@ -155,7 +157,15 @@ export default function App() {
             aoDesarquivar={(ano) => comAnos(() => api.desarquivarAno(ano))}
           />
 
-          <div className="ml-auto">
+          <div className="ml-auto flex items-center gap-2">
+            {!arquivado && (
+              <button
+                onClick={() => setImportando((v) => !v)}
+                className="rounded-lg border border-roxo-200 px-3 py-1.5 text-xs font-medium text-roxo-500 hover:bg-roxo-100 dark:border-roxo-600 dark:text-roxo-100 dark:hover:bg-roxo-700"
+              >
+                Importar extrato
+              </button>
+            )}
             <BotaoTema tema={tema} aoAlternar={alternar} />
           </div>
         </div>
@@ -191,6 +201,17 @@ export default function App() {
           <p className="mb-4 rounded-lg bg-rose-50 px-4 py-3 text-sm text-rose-700 dark:bg-rose-950 dark:text-rose-200">
             {erro}
           </p>
+        )}
+
+        {importando && !arquivado && (
+          <div className="mb-5">
+            <ImportarExtrato
+              ano={anoAtual}
+              categorias={categorias}
+              aoFechar={() => setImportando(false)}
+              aoImportar={recarregar}
+            />
+          </div>
         )}
 
         {resumo && mes && (

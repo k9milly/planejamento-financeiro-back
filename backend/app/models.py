@@ -123,6 +123,7 @@ class Lancamento(Base):
     __table_args__ = (
         CheckConstraint("mes BETWEEN 1 AND 12", name="ck_lancamento_mes"),
         CheckConstraint("valor > 0", name="ck_lancamento_valor_positivo"),
+        UniqueConstraint("ano_id", "fitid", name="uq_lancamento_fitid_por_ano"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -146,6 +147,12 @@ class Lancamento(Base):
     categoria_id: Mapped[int | None] = mapped_column(
         ForeignKey("categorias.id", ondelete="SET NULL"), nullable=True, index=True
     )
+
+    # Identificador da transação no extrato do banco (FITID do OFX). Preenchido
+    # só em lançamentos importados; é o que impede que reimportar o mesmo
+    # extrato duplique tudo. Único por ano, não global: bancos diferentes podem
+    # emitir o mesmo FITID.
+    fitid: Mapped[str | None] = mapped_column(String(120), nullable=True, index=True)
     descricao: Mapped[str] = mapped_column(Text, nullable=False, default="")
     criado_em: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, server_default=func.now()
@@ -211,6 +218,33 @@ class GastoFixoMensal(Base):
     )
 
     gasto_fixo: Mapped["GastoFixo"] = relationship(back_populates="meses")
+
+
+class RegraCategorizacao(Base):
+    """Regra que sugere categoria a partir da descrição do extrato.
+
+    O usuário ensina uma vez ("iFood é Comida") e as importações seguintes já
+    chegam categorizadas. As regras são globais, como as categorias, para
+    valerem em todos os anos.
+
+    A sugestão nunca é aplicada sozinha: ela preenche a tela de revisão, e quem
+    confirma é o usuário.
+    """
+
+    __tablename__ = "regras_categorizacao"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    # Trecho procurado na descrição, sem acento e em maiúsculas — a comparação
+    # é feita sobre a descrição normalizada da mesma forma.
+    padrao: Mapped[str] = mapped_column(String(120), unique=True, nullable=False)
+    categoria_id: Mapped[int] = mapped_column(
+        ForeignKey("categorias.id", ondelete="CASCADE"), nullable=False
+    )
+    criado_em: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, server_default=func.now()
+    )
+
+    categoria: Mapped["Categoria"] = relationship()
 
 
 class ItemWishlist(Base):

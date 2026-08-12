@@ -98,6 +98,73 @@ class LancamentoOut(_Base):
     categoria_id: int | None
     categoria: CategoriaOut | None
     descricao: str
+    fitid: str | None
+
+
+# --------------------------------------------------------------------------- #
+# Regras de categorização
+# --------------------------------------------------------------------------- #
+class RegraCriar(BaseModel):
+    padrao: str = Field(min_length=2, max_length=120)
+    categoria_id: int
+
+
+class RegraOut(_Base):
+    id: int
+    padrao: str
+    categoria_id: int
+    categoria: CategoriaOut
+
+
+# --------------------------------------------------------------------------- #
+# Importação de extrato
+# --------------------------------------------------------------------------- #
+class TransacaoPrevia(BaseModel):
+    """Uma linha da tela de revisão da importação."""
+
+    fitid: str
+    data: date
+    valor: Decimal
+    descricao: str
+    tipo_sugerido: TipoLancamento
+    categoria_sugerida_id: int | None
+    categoria_sugerida_nome: str | None
+    # Já existe um lançamento com este fitid neste ano.
+    duplicado: bool
+    # Mesma data e mesmo valor de um lançamento existente, mas fitid diferente:
+    # provavelmente foi digitado à mão antes de importar.
+    possivel_repetido: bool
+    fora_do_ano: bool
+
+
+class PreviaImportacao(BaseModel):
+    total_lidas: int
+    ja_importadas: int
+    transacoes: list[TransacaoPrevia]
+
+
+class TransacaoConfirmar(BaseModel):
+    """Uma transação aprovada pelo usuário, com os ajustes que ele fez."""
+
+    fitid: str
+    data: date
+    valor: Decimal = Field(gt=0, max_digits=12, decimal_places=2)
+    tipo: TipoLancamento
+    destino: DestinoRendimento | None = None
+    categoria_id: int | None = None
+    descricao: str = ""
+    # Quando preenchido, cria uma regra para categorizar assim das próximas vezes.
+    aprender_padrao: str | None = None
+
+
+class ConfirmarImportacao(BaseModel):
+    transacoes: list[TransacaoConfirmar]
+
+
+class ResultadoImportacao(BaseModel):
+    importadas: int
+    ignoradas_duplicadas: int
+    regras_criadas: int
 
 
 # --------------------------------------------------------------------------- #
