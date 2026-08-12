@@ -102,6 +102,26 @@ class Ano(Base):
     )
 
 
+class Usuario(Base):
+    """Quem pode usar o sistema.
+
+    A senha nunca é guardada: só o hash bcrypt dela. Não há cadastro pela API —
+    usuários são criados pelo script `scripts/criar_usuario.py`, rodado por
+    quem administra a instalação. Um app de finanças pessoais não tem motivo
+    para aceitar cadastro aberto na internet.
+    """
+
+    __tablename__ = "usuarios"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    email: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
+    senha_hash: Mapped[str] = mapped_column(String(255), nullable=False)
+    ativo: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    criado_em: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, server_default=func.now()
+    )
+
+
 class Categoria(Base):
     """Categoria de gasto. Global (não pertence a um ano) para que os relatórios
     por categoria possam ser comparados entre anos."""

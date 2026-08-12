@@ -16,6 +16,8 @@ import type {
   TransacaoConfirmar,
 } from '../types/api';
 
+import { sessao } from './sessao';
+
 const BASE = import.meta.env.VITE_API_URL ?? 'http://localhost:8000';
 
 /** Erro com a mensagem que o backend mandou, para exibir direto na tela. */
@@ -47,7 +49,21 @@ async function requisitarBruto<T>(
   caminho: string,
   init?: RequestInit,
 ): Promise<T> {
-  const resposta = await fetch(`${BASE}${caminho}`, init);
+  const token = sessao.ler();
+  const resposta = await fetch(`${BASE}${caminho}`, {
+    ...init,
+    headers: {
+      ...init?.headers,
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+  });
+
+  // Token vencido ou inválido: derruba a sessão e deixa o app voltar ao login,
+  // em vez de encher a tela de erros a cada requisição.
+  if (resposta.status === 401 && !caminho.startsWith('/auth/login')) {
+    sessao.expirou();
+    throw new ErroApi('Sessão expirada. Entre novamente.', 401);
+  }
 
   if (!resposta.ok) {
     // O FastAPI devolve {detail: "..."} ou {detail: [{msg: "..."}]} conforme o
@@ -70,6 +86,19 @@ async function requisitarBruto<T>(
 }
 
 export const api = {
+  login: async (email: string, senha: string) => {
+    const dados = await requisitar<{ token: string; email: string }>(
+      '/auth/login',
+      { method: 'POST', body: JSON.stringify({ email, senha }) },
+    );
+    sessao.guardar(dados.token);
+    return dados;
+  },
+
+  eu: () => requisitar<{ id: number; email: string }>('/auth/eu'),
+
+  sair: () => sessao.limpar(),
+
   listarAnos: () => requisitar<Ano[]>('/anos'),
 
   criarAno: (ano: number) =>
