@@ -9,6 +9,8 @@ import { GastosFixos } from './components/GastosFixos';
 import { GastosPorCategoria } from './components/GastosPorCategoria';
 import { GerenciadorAnos } from './components/GerenciadorAnos';
 import { ImportarExtrato } from './components/ImportarExtrato';
+import { Login } from './components/Login';
+import { sessao } from './lib/sessao';
 import { TabelaLancamentos } from './components/TabelaLancamentos';
 import { TotaisMes } from './components/TotaisMes';
 import { TotalGuardado } from './components/TotalGuardado';
@@ -36,6 +38,23 @@ export default function App() {
   const [erro, setErro] = useState('');
   const [carregando, setCarregando] = useState(true);
   const [importando, setImportando] = useState(false);
+  // null = ainda verificando o token guardado.
+  const [autenticado, setAutenticado] = useState<boolean | null>(null);
+
+  // Confere se o token guardado ainda vale antes de mostrar a tela principal,
+  // e volta ao login se a API derrubar a sessão a qualquer momento.
+  useEffect(() => {
+    sessao.observarExpiracao(() => setAutenticado(false));
+
+    if (!sessao.ler()) {
+      setAutenticado(false);
+      return;
+    }
+    api
+      .eu()
+      .then(() => setAutenticado(true))
+      .catch(() => setAutenticado(false));
+  }, []);
 
   const carregarAnos = useCallback(async () => {
     const lista = await api.listarAnos();
@@ -43,8 +62,11 @@ export default function App() {
     return lista;
   }, []);
 
-  // Carga inicial: anos disponíveis e categorias.
+  // Carga inicial: anos disponíveis e categorias. Só depois do login — antes
+  // disso toda chamada voltaria 401.
   useEffect(() => {
+    if (!autenticado) return;
+    setCarregando(true);
     (async () => {
       try {
         const [listaAnos, listaCategorias] = await Promise.all([
@@ -61,7 +83,7 @@ export default function App() {
         setCarregando(false);
       }
     })();
-  }, [carregarAnos]);
+  }, [carregarAnos, autenticado]);
 
   const recarregar = useCallback(async () => {
     if (anoAtual === null) return;
@@ -84,8 +106,9 @@ export default function App() {
   }, [anoAtual, mesAtual]);
 
   useEffect(() => {
+    if (!autenticado) return;
     void recarregar();
-  }, [recarregar]);
+  }, [recarregar, autenticado]);
 
   /** Envolve uma escrita: executa, recarrega tudo e mostra o erro na barra. */
   function acao<A extends unknown[]>(
@@ -129,6 +152,19 @@ export default function App() {
     }
   }
 
+  if (autenticado === null) return <Aviso texto="Verificando sessão…" />;
+
+  if (!autenticado) {
+    return (
+      <Login
+        aoEntrar={() => {
+          setErro('');
+          setAutenticado(true);
+        }}
+      />
+    );
+  }
+
   if (carregando) return <Aviso texto="Carregando…" />;
 
   if (anoAtual === null) {
@@ -167,6 +203,15 @@ export default function App() {
               </button>
             )}
             <BotaoTema tema={tema} aoAlternar={alternar} />
+            <button
+              onClick={() => {
+                api.sair();
+                setAutenticado(false);
+              }}
+              className="rounded-lg border border-roxo-200 px-3 py-1.5 text-xs font-medium text-roxo-500 hover:bg-roxo-100 dark:border-roxo-600 dark:text-roxo-100 dark:hover:bg-roxo-700"
+            >
+              Sair
+            </button>
           </div>
         </div>
 

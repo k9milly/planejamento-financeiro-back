@@ -3,33 +3,8 @@
 from __future__ import annotations
 
 import pytest
-from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
 
-from app.database import Base, get_db
-from app.main import app
-
-
-@pytest.fixture()
-def cliente(tmp_path):
-    engine = create_engine(
-        f"sqlite:///{tmp_path / 'teste.db'}", connect_args={"check_same_thread": False}
-    )
-    Base.metadata.create_all(bind=engine)
-    Sessao = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
-
-    def _get_db():
-        db = Sessao()
-        try:
-            yield db
-        finally:
-            db.close()
-
-    app.dependency_overrides[get_db] = _get_db
-    with TestClient(app) as c:
-        yield c
-    app.dependency_overrides.clear()
+# O fixture `cliente`, já autenticado, vem de conftest.py.
 
 
 @pytest.fixture()

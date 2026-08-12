@@ -8,6 +8,11 @@ pydantic-settings==2.7.0
 openpyxl==3.1.5
 # Necessário para o upload de arquivo na importação de extrato.
 python-multipart==0.0.20
+# Autenticação: hash de senha e tokens.
+bcrypt==4.2.1
+pyjwt==2.10.1
+# Requerido pelo EmailStr do Pydantic.
+email-validator==2.2.0
 
 # Desenvolvimento
 pytest==8.3.4

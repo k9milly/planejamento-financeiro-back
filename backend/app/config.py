@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import secrets
 from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -23,6 +24,17 @@ class Settings(BaseSettings):
         "http://localhost:5173",
         "http://127.0.0.1:5173",
     ]
+
+    # Chave que assina os tokens de sessão. O padrão é aleatório a cada
+    # inicialização: em desenvolvimento isso só derruba a sessão ao reiniciar,
+    # mas em produção **precisa** vir do ambiente — sem isso, todo deploy
+    # desloga todo mundo, e réplicas diferentes não reconheceriam os tokens
+    # umas das outras.
+    secret_key: str = secrets.token_urlsafe(32)
+
+    # Sessão longa de propósito: é um app pessoal de uso diário, e exigir
+    # login toda hora no celular faria a pessoa desistir de usar.
+    token_expira_horas: int = 24 * 30
 
 
 settings = Settings()

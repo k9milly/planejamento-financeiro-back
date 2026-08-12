@@ -110,6 +110,18 @@ npm run dev
 
 A interface abre em `http://localhost:5173`.
 
+### Primeiro usuário
+
+Toda rota de dados exige sessão. Crie seu usuário antes de abrir a interface:
+
+```bash
+cd backend
+python -m scripts.criar_usuario
+```
+
+A senha é pedida de forma interativa e não aparece na tela nem no histórico do
+terminal. Rodar de novo com o mesmo e-mail troca a senha.
+
 ### Primeiro ano
 
 Com a API rodando, crie o ano inicial:

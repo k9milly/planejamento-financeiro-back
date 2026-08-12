@@ -15,8 +15,12 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
 from app.database import criar_tabelas
+from fastapi import Depends
+
+from app.deps import usuario_atual
 from app.routers import (
     anos,
+    auth,
     categorias,
     gastos_fixos,
     importacao,
@@ -50,13 +54,20 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.include_router(anos.router)
-app.include_router(categorias.router)
-app.include_router(lancamentos.router)
-app.include_router(gastos_fixos.router)
-app.include_router(wishlist.router)
-app.include_router(regras.router)
-app.include_router(importacao.router)
+app.include_router(auth.router)
+
+# Toda rota de dados exige sessão. Aplicado no registro do router, e não em
+# cada função, para que uma rota nova nasça protegida — esquecer o decorador em
+# um endpoint seria expor dados financeiros sem ninguém notar.
+protegido = [Depends(usuario_atual)]
+
+app.include_router(anos.router, dependencies=protegido)
+app.include_router(categorias.router, dependencies=protegido)
+app.include_router(lancamentos.router, dependencies=protegido)
+app.include_router(gastos_fixos.router, dependencies=protegido)
+app.include_router(wishlist.router, dependencies=protegido)
+app.include_router(regras.router, dependencies=protegido)
+app.include_router(importacao.router, dependencies=protegido)
 
 
 @app.get("/saude", tags=["infra"], summary="Verificação de saúde")

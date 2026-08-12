@@ -3,10 +3,42 @@
 from __future__ import annotations
 
 from fastapi import Depends, HTTPException, Path, status
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models import Ano
+from app.models import Ano, Usuario
+from app.security import ler_token
+
+# auto_error=False para responder 401 com a nossa mensagem em português em vez
+# do texto padrão do FastAPI.
+_esquema = HTTPBearer(auto_error=False)
+
+
+def usuario_atual(
+    credencial: HTTPAuthorizationCredentials | None = Depends(_esquema),
+    db: Session = Depends(get_db),
+) -> Usuario:
+    """Exige um token válido. Aplicada a todas as rotas de dados."""
+    nao_autorizado = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Sessão inválida ou expirada. Entre novamente.",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+
+    if credencial is None:
+        raise nao_autorizado
+
+    usuario_id = ler_token(credencial.credentials)
+    if usuario_id is None:
+        raise nao_autorizado
+
+    usuario = db.get(Usuario, usuario_id)
+    # Um usuário desativado não pode continuar usando um token já emitido.
+    if usuario is None or not usuario.ativo:
+        raise nao_autorizado
+
+    return usuario
 
 MESES_PT = [
     "janeiro", "fevereiro", "março", "abril", "maio", "junho",

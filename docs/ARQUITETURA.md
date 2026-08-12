@@ -137,12 +137,37 @@ O risco é os dois arquivos divergirem — por isso ambos têm um comentário no
 topo apontando um para o outro. Se o número de endpoints crescer muito, vale
 migrar para geração automática (`openapi-typescript`).
 
+### Como funciona a autenticação
+
+Senha com **bcrypt**, sessão com **JWT**.
+
+Bcrypt e não SHA-256: hashes rápidos são rápidos para quem ataca também, e o
+objetivo aqui é o contrário. O bcrypt é lento de propósito e já embute o sal,
+então duas contas com a mesma senha produzem hashes diferentes.
+
+JWT porque não exige estado no servidor — nada de tabela de sessões, e escalar
+para mais de uma réplica não quebra nada. O preço é não conseguir invalidar um
+token específico antes de ele vencer; trocar a `SECRET_KEY` derruba todas as
+sessões de uma vez, e é o botão de pânico disponível.
+
+A dependência de sessão é aplicada no **registro dos routers**, em `main.py`, e
+não endpoint por endpoint. A diferença importa: assim uma rota nova nasce
+protegida por padrão. Se dependesse de lembrar de um decorador, um esquecimento
+exporia dados financeiros sem ninguém perceber. Há um teste parametrizado
+(`test_rota_exige_sessao`) que percorre uma rota de cada router conferindo o
+401.
+
+Não existe endpoint de cadastro. Usuários são criados por
+`scripts/criar_usuario.py`, que pede a senha interativamente — sem opção de
+passá-la por argumento, porque argumentos ficam no histórico do shell e são
+visíveis a outros processos.
+
 ## Caminho para produção
 
 O que falta, na ordem em que deve ser feito:
 
-1. **Autenticação.** Hoje a API é aberta. Enquanto roda em `localhost`, tudo
-   bem; exposta na internet, não.
+1. **`SECRET_KEY` no ambiente.** Sem ela a chave é sorteada a cada
+   inicialização, e todo reinício desloga você.
 2. **Migrações** com Alembic, substituindo `create_all()`.
 3. **Postgres**, via `DATABASE_URL`.
 4. **CORS restrito** ao domínio real do frontend (hoje aceita `localhost:5173`).
