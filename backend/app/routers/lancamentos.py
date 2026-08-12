@@ -6,9 +6,14 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session, joinedload
 
 from app.database import get_db
-from app.models import Ano, Categoria, Lancamento, TipoLancamento
+from app.models import Ano, Categoria, Conta, Lancamento, TipoLancamento
 from app.deps import obter_ano, obter_ano_editavel
-from app.schemas import LancamentoAtualizar, LancamentoCriar, LancamentoOut
+from app.schemas import (
+    LancamentoAtualizar,
+    LancamentoCriar,
+    LancamentoOut,
+    validar_coerencia,
+)
 
 router = APIRouter(prefix="/anos/{ano}/lancamentos", tags=["lançamentos"])
 
@@ -18,12 +23,13 @@ def listar(
     mes: int | None = Query(default=None, ge=1, le=12),
     tipo: TipoLancamento | None = None,
     categoria_id: int | None = None,
+    conta_id: int | None = None,
     ano_ref: Ano = Depends(obter_ano),
     db: Session = Depends(get_db),
 ) -> list[Lancamento]:
     consulta = (
         db.query(Lancamento)
-        .options(joinedload(Lancamento.categoria))
+        .options(joinedload(Lancamento.categoria), joinedload(Lancamento.conta))
         .filter(Lancamento.ano_id == ano_ref.id)
     )
     if mes is not None:
@@ -32,6 +38,13 @@ def listar(
         consulta = consulta.filter(Lancamento.tipo == tipo)
     if categoria_id is not None:
         consulta = consulta.filter(Lancamento.categoria_id == categoria_id)
+    if conta_id is not None:
+        # Numa transferência a conta aparece nos dois lados: filtrar só pela
+        # origem esconderia o dinheiro que entrou na conta consultada.
+        consulta = consulta.filter(
+            (Lancamento.conta_id == conta_id)
+            | (Lancamento.conta_destino_id == conta_id)
+        )
 
     return consulta.order_by(Lancamento.data, Lancamento.id).all()
 
@@ -47,6 +60,8 @@ def criar(
 ) -> Lancamento:
     _validar_data_no_ano(dados.data.year, ano_ref)
     _validar_categoria(dados.categoria_id, db)
+    _validar_conta(dados.conta_id, db)
+    _validar_conta(dados.conta_destino_id, db)
 
     lanc = Lancamento(
         ano_id=ano_ref.id,
@@ -80,6 +95,10 @@ def atualizar(
         lanc.mes = lanc.data.month
     if "categoria_id" in alteracoes:
         _validar_categoria(lanc.categoria_id, db)
+    if "conta_id" in alteracoes:
+        _validar_conta(lanc.conta_id, db)
+    if "conta_destino_id" in alteracoes:
+        _validar_conta(lanc.conta_destino_id, db)
 
     _validar_coerencia(lanc)
 
@@ -137,24 +156,34 @@ def _validar_categoria(categoria_id: int | None, db: Session) -> None:
         )
 
 
+def _validar_conta(conta_id: int | None, db: Session) -> None:
+    if conta_id is None:
+        return
+    if db.get(Conta, conta_id) is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=f"Conta {conta_id} não existe.",
+        )
+
+
 def _validar_coerencia(lanc: Lancamento) -> None:
     """Mesmas regras do schema de criação, aplicadas ao objeto já mesclado.
 
-    Necessário porque um PATCH pode mudar só o tipo, deixando um `destino` ou
-    uma `categoria` que era válida antes e deixou de ser.
+    Necessário porque um PATCH pode mudar só o tipo, deixando um `destino`, uma
+    `categoria` ou uma conta de destino que eram válidos antes e deixaram de
+    ser.
     """
-    if lanc.tipo is TipoLancamento.RENDIMENTO and lanc.destino is None:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail="Rendimento exige 'destino': 'conta' ou 'guardado'.",
+
+    def erro(mensagem: str) -> HTTPException:
+        return HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=mensagem
         )
-    if lanc.tipo is not TipoLancamento.RENDIMENTO and lanc.destino is not None:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail="'destino' só se aplica a lançamentos do tipo rendimento.",
-        )
-    if lanc.tipo is not TipoLancamento.SAIDA and lanc.categoria_id is not None:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail="Somente lançamentos do tipo saída podem ter categoria.",
-        )
+
+    validar_coerencia(
+        lanc.tipo,
+        lanc.destino,
+        lanc.categoria_id,
+        lanc.conta_id,
+        lanc.conta_destino_id,
+        erro,
+    )

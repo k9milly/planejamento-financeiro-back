@@ -24,6 +24,44 @@ class _Base(BaseModel):
 
 
 # --------------------------------------------------------------------------- #
+# Contas
+# --------------------------------------------------------------------------- #
+class ContaCriar(BaseModel):
+    nome: str = Field(min_length=1, max_length=60)
+    cor: str = Field(default="#8d7799", pattern=r"^#[0-9a-fA-F]{6}$")
+    ordem: int = 0
+
+
+class ContaAtualizar(BaseModel):
+    nome: str | None = Field(default=None, min_length=1, max_length=60)
+    cor: str | None = Field(default=None, pattern=r"^#[0-9a-fA-F]{6}$")
+    ordem: int | None = None
+    ativa: bool | None = None
+
+
+class ContaOut(_Base):
+    id: int
+    nome: str
+    cor: str
+    ordem: int
+    ativa: bool
+
+
+class SaldoInicialDefinir(BaseModel):
+    """Quanto havia na conta antes do primeiro lançamento do ano."""
+
+    conta_id: int
+    saldo: Decimal = Field(default=Decimal("0"), max_digits=12, decimal_places=2)
+    guardado: Decimal = Field(default=Decimal("0"), max_digits=12, decimal_places=2)
+
+
+class SaldoInicialOut(_Base):
+    conta_id: int
+    saldo: Decimal
+    guardado: Decimal
+
+
+# --------------------------------------------------------------------------- #
 # Categorias
 # --------------------------------------------------------------------------- #
 class CategoriaCriar(BaseModel):
@@ -51,6 +89,8 @@ class LancamentoBase(BaseModel):
     data: date
     valor: Decimal = Field(gt=0, max_digits=12, decimal_places=2)
     tipo: TipoLancamento
+    conta_id: int
+    conta_destino_id: int | None = None
     destino: DestinoRendimento | None = None
     categoria_id: int | None = None
     descricao: str = ""
@@ -58,17 +98,50 @@ class LancamentoBase(BaseModel):
     @model_validator(mode="after")
     def _coerencia(self) -> "LancamentoBase":
         """Impede combinações que tornariam os totais ambíguos."""
-        if self.tipo is TipoLancamento.RENDIMENTO and self.destino is None:
-            raise ValueError(
-                "Rendimento exige 'destino': 'conta' ou 'guardado'."
-            )
-        if self.tipo is not TipoLancamento.RENDIMENTO and self.destino is not None:
-            raise ValueError("'destino' só se aplica a lançamentos do tipo rendimento.")
-        if self.tipo is not TipoLancamento.SAIDA and self.categoria_id is not None:
-            raise ValueError(
-                "Somente lançamentos do tipo saída podem ter categoria."
-            )
+        validar_coerencia(
+            self.tipo, self.destino, self.categoria_id, self.conta_id,
+            self.conta_destino_id, ValueError,
+        )
         return self
+
+
+# Tipos que dependem de saber qual carteira foi afetada.
+TIPOS_COM_DESTINO = {TipoLancamento.RENDIMENTO, TipoLancamento.PERDA}
+
+
+def validar_coerencia(
+    tipo: TipoLancamento,
+    destino: DestinoRendimento | None,
+    categoria_id: int | None,
+    conta_id: int,
+    conta_destino_id: int | None,
+    erro,
+) -> None:
+    """Regras de combinação entre os campos de um lançamento.
+
+    Vive fora do schema porque também precisa rodar sobre o objeto já mesclado
+    de um PATCH e sobre as linhas confirmadas na importação — três caminhos que
+    precisam concordar. Recebe a classe de erro a levantar para servir tanto ao
+    Pydantic (ValueError) quanto aos routers (HTTPException).
+    """
+    if tipo in TIPOS_COM_DESTINO and destino is None:
+        raise erro(
+            f"Lançamento do tipo '{tipo.value}' exige 'destino': "
+            "'conta' ou 'guardado'."
+        )
+    if tipo not in TIPOS_COM_DESTINO and destino is not None:
+        raise erro("'destino' só se aplica a rendimento e perda.")
+
+    if tipo is not TipoLancamento.SAIDA and categoria_id is not None:
+        raise erro("Somente lançamentos do tipo saída podem ter categoria.")
+
+    if tipo is TipoLancamento.TRANSFERENCIA:
+        if conta_destino_id is None:
+            raise erro("Transferência exige a conta de destino.")
+        if conta_destino_id == conta_id:
+            raise erro("A conta de destino precisa ser diferente da de origem.")
+    elif conta_destino_id is not None:
+        raise erro("'conta_destino_id' só se aplica a transferências.")
 
 
 class LancamentoCriar(LancamentoBase):
@@ -82,6 +155,8 @@ class LancamentoAtualizar(BaseModel):
     data: date | None = None
     valor: Decimal | None = Field(default=None, gt=0, max_digits=12, decimal_places=2)
     tipo: TipoLancamento | None = None
+    conta_id: int | None = None
+    conta_destino_id: int | None = None
     destino: DestinoRendimento | None = None
     categoria_id: int | None = None
     descricao: str | None = None
@@ -94,6 +169,9 @@ class LancamentoOut(_Base):
     data: date
     valor: Decimal
     tipo: TipoLancamento
+    conta_id: int
+    conta_destino_id: int | None
+    conta: ContaOut
     destino: DestinoRendimento | None
     categoria_id: int | None
     categoria: CategoriaOut | None
@@ -150,6 +228,8 @@ class TransacaoConfirmar(BaseModel):
     data: date
     valor: Decimal = Field(gt=0, max_digits=12, decimal_places=2)
     tipo: TipoLancamento
+    conta_id: int
+    conta_destino_id: int | None = None
     destino: DestinoRendimento | None = None
     categoria_id: int | None = None
     descricao: str = ""
@@ -172,20 +252,17 @@ class ResultadoImportacao(BaseModel):
 # --------------------------------------------------------------------------- #
 class AnoCriar(BaseModel):
     ano: int = Field(ge=1900, le=2200)
-    saldo_inicial_conta: Decimal = Field(default=Decimal("0"), max_digits=12,
-                                         decimal_places=2)
-    saldo_inicial_guardado: Decimal = Field(default=Decimal("0"), max_digits=12,
-                                            decimal_places=2)
+    # Aberturas por conta. Contas omitidas começam zeradas.
+    saldos_iniciais: list[SaldoInicialDefinir] = []
 
 
 class AnoOut(_Base):
     id: int
     ano: int
-    saldo_inicial_conta: Decimal
-    saldo_inicial_guardado: Decimal
     arquivado: bool
     arquivado_em: datetime | None
     criado_em: datetime
+    saldos_iniciais: list[SaldoInicialOut] = []
 
 
 # --------------------------------------------------------------------------- #
@@ -197,6 +274,8 @@ class GastoFixoCriar(BaseModel):
     dia_vencimento: int = Field(default=1, ge=1, le=31)
     forma_pagamento: str = ""
     categoria_id: int | None = None
+    # De qual conta esta despesa sai; usada ao gerar o lançamento do mês.
+    conta_id: int
 
 
 class GastoFixoAtualizar(BaseModel):
@@ -205,6 +284,7 @@ class GastoFixoAtualizar(BaseModel):
     dia_vencimento: int | None = Field(default=None, ge=1, le=31)
     forma_pagamento: str | None = None
     categoria_id: int | None = None
+    conta_id: int | None = None
     ativo: bool | None = None
 
 
@@ -222,6 +302,7 @@ class GastoFixoOut(_Base):
     dia_vencimento: int
     forma_pagamento: str
     categoria_id: int | None
+    conta_id: int
     ativo: bool
     meses: list[GastoFixoMensalOut] = []
 
@@ -263,6 +344,16 @@ class GastoCategoriaOut(BaseModel):
     percentual: float
 
 
+class CarteirasContaOut(BaseModel):
+    """Como uma conta fechou o mês."""
+
+    conta_id: int
+    nome: str
+    cor: str
+    saldo: Decimal
+    guardado: Decimal
+
+
 class ResumoMesOut(BaseModel):
     """Alimenta o container 'Total de {mês}' e o de gastos por categoria."""
 
@@ -274,8 +365,12 @@ class ResumoMesOut(BaseModel):
     saldo: Decimal
     saldo_inicial: Decimal
     guardado_acumulado: Decimal
-    rendimento_conta: Decimal
-    rendimento_guardado: Decimal
+    rendimentos: Decimal
+    perdas: Decimal
+    # Quanto circulou entre contas suas. Não entra em entradas nem saídas;
+    # aparece só para você conferir que o valor bate com o extrato.
+    transferido: Decimal
+    por_conta: list[CarteirasContaOut]
     gastos_por_categoria: list[GastoCategoriaOut]
 
 
@@ -284,10 +379,9 @@ class ResumoAnoOut(BaseModel):
 
     ano: int
     arquivado: bool
-    saldo_inicial_conta: Decimal
-    saldo_inicial_guardado: Decimal
     total_guardado: Decimal
     saldo_final: Decimal
     total_entradas: Decimal
     total_saidas: Decimal
+    por_conta: list[CarteirasContaOut]
     meses: list[ResumoMesOut]

@@ -30,13 +30,27 @@ from app.database import Base
 
 
 class TipoLancamento(str, enum.Enum):
-    """Como o lançamento movimenta as carteiras.
+    """Como o lançamento movimenta o dinheiro.
 
-    ENTRADA    conta += valor            (recebi dinheiro)
-    SAIDA      conta -= valor            (gastei da conta)
-    GUARDADO   conta -= valor, guardado += valor   (movi para a reserva)
-    RETIRADO   guardado -= valor, conta += valor   (tirei da reserva)
-    RENDIMENTO carteira indicada por `destino` += valor
+    Cada conta tem duas carteiras: o **saldo** (disponível) e o **guardado**
+    (reserva). Todos os efeitos abaixo acontecem dentro da conta do lançamento,
+    exceto a transferência, que é a única que envolve duas contas.
+
+    ENTRADA       saldo += valor                     (recebi dinheiro)
+    SAIDA         saldo -= valor                     (gastei)
+    GUARDADO      saldo -= valor, guardado += valor  (movi para a reserva)
+    RETIRADO      guardado -= valor, saldo += valor  (tirei da reserva)
+    RENDIMENTO    carteira indicada por `destino` += valor
+    PERDA         carteira indicada por `destino` -= valor
+    TRANSFERENCIA saldo da conta -= valor, saldo da conta destino += valor
+
+    PERDA existe porque investimento cai. Sem ela, uma queda do ETF teria de ser
+    lançada como saída, e apareceria como gasto no relatório por categoria —
+    dinheiro que encolheu não é dinheiro que foi consumido.
+
+    TRANSFERENCIA existe porque mover dinheiro entre contas suas não é receita
+    nem despesa. Lançar como saída em uma e entrada na outra inflaria os dois
+    totais do mês sem que nada tivesse sido gasto ou recebido.
     """
 
     ENTRADA = "entrada"
@@ -44,10 +58,16 @@ class TipoLancamento(str, enum.Enum):
     GUARDADO = "guardado"
     RETIRADO = "retirado"
     RENDIMENTO = "rendimento"
+    PERDA = "perda"
+    TRANSFERENCIA = "transferencia"
 
 
 class DestinoRendimento(str, enum.Enum):
-    """Onde o rendimento caiu. Obrigatório apenas quando tipo == RENDIMENTO."""
+    """Qual carteira o rendimento ou a perda atinge.
+
+    Obrigatório em RENDIMENTO e PERDA: render na conta corrente e render na
+    reserva têm efeitos diferentes no que você tem disponível para gastar.
+    """
 
     CONTA = "conta"
     GUARDADO = "guardado"
@@ -76,21 +96,15 @@ class Ano(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     ano: Mapped[int] = mapped_column(Integer, unique=True, nullable=False)
 
-    # Saldos de abertura: o que já existia antes do primeiro lançamento do ano.
-    # Quando um ano é gerado a partir do anterior, herdam os saldos de fechamento.
-    saldo_inicial_conta: Mapped[float] = mapped_column(
-        Numeric(12, 2), nullable=False, default=0
-    )
-    saldo_inicial_guardado: Mapped[float] = mapped_column(
-        Numeric(12, 2), nullable=False, default=0
-    )
-
     arquivado: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     arquivado_em: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     criado_em: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, server_default=func.now()
     )
 
+    saldos_iniciais: Mapped[list["SaldoInicial"]] = relationship(
+        back_populates="ano_ref", cascade="all, delete-orphan"
+    )
     lancamentos: Mapped[list["Lancamento"]] = relationship(
         back_populates="ano_ref", cascade="all, delete-orphan"
     )
@@ -122,6 +136,58 @@ class Usuario(Base):
     )
 
 
+class Conta(Base):
+    """Uma conta de verdade: Nubank, Mercado Pago, dinheiro em espécie.
+
+    Cada conta guarda duas carteiras — o saldo disponível e a reserva. A reserva
+    é por conta porque na prática ela mora em lugares diferentes: uma caixinha
+    no Mercado Pago e um ETF no Nubank são reservas distintas, e somar as duas
+    num número só esconderia onde o dinheiro está.
+
+    Contas são globais, não por ano: o Nubank de 2026 é o mesmo de 2027, e isso
+    permite comparar a evolução de cada conta ao longo dos anos.
+    """
+
+    __tablename__ = "contas"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    nome: Mapped[str] = mapped_column(String(60), unique=True, nullable=False)
+    cor: Mapped[str] = mapped_column(String(7), nullable=False, default="#8d7799")
+    # Controla a ordem de exibição; a conta principal fica em primeiro.
+    ordem: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    ativa: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+
+    saldos: Mapped[list["SaldoInicial"]] = relationship(
+        back_populates="conta", cascade="all, delete-orphan"
+    )
+
+
+class SaldoInicial(Base):
+    """Quanto havia em uma conta antes do primeiro lançamento de um ano.
+
+    Fica separado de `Conta` porque é um valor por ano: cada ano tem sua própria
+    abertura, e arquivar um ano grava a abertura do seguinte.
+    """
+
+    __tablename__ = "saldos_iniciais"
+    __table_args__ = (
+        UniqueConstraint("ano_id", "conta_id", name="uq_saldo_inicial_ano_conta"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    ano_id: Mapped[int] = mapped_column(
+        ForeignKey("anos.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    conta_id: Mapped[int] = mapped_column(
+        ForeignKey("contas.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    saldo: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False, default=0)
+    guardado: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False, default=0)
+
+    conta: Mapped["Conta"] = relationship(back_populates="saldos")
+    ano_ref: Mapped["Ano"] = relationship(back_populates="saldos_iniciais")
+
+
 class Categoria(Base):
     """Categoria de gasto. Global (não pertence a um ano) para que os relatórios
     por categoria possam ser comparados entre anos."""
@@ -149,6 +215,14 @@ class Lancamento(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     ano_id: Mapped[int] = mapped_column(
         ForeignKey("anos.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    # Em qual conta o dinheiro se moveu. Numa transferência, é a de origem.
+    conta_id: Mapped[int] = mapped_column(
+        ForeignKey("contas.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
+    # Só em transferências: para onde o dinheiro foi.
+    conta_destino_id: Mapped[int | None] = mapped_column(
+        ForeignKey("contas.id", ondelete="RESTRICT"), nullable=True
     )
     mes: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
     data: Mapped[date] = mapped_column(Date, nullable=False)
@@ -180,6 +254,10 @@ class Lancamento(Base):
 
     ano_ref: Mapped["Ano"] = relationship(back_populates="lancamentos")
     categoria: Mapped["Categoria | None"] = relationship(back_populates="lancamentos")
+    conta: Mapped["Conta"] = relationship(foreign_keys=[conta_id])
+    conta_destino: Mapped["Conta | None"] = relationship(
+        foreign_keys=[conta_destino_id]
+    )
 
 
 class GastoFixo(Base):
@@ -204,6 +282,10 @@ class GastoFixo(Base):
     forma_pagamento: Mapped[str] = mapped_column(String(60), nullable=False, default="")
     categoria_id: Mapped[int | None] = mapped_column(
         ForeignKey("categorias.id", ondelete="SET NULL"), nullable=True
+    )
+    # De qual conta a despesa sai; herdada pelo lançamento gerado a cada mês.
+    conta_id: Mapped[int] = mapped_column(
+        ForeignKey("contas.id", ondelete="RESTRICT"), nullable=False, index=True
     )
     ativo: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
 

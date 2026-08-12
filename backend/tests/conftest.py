@@ -64,3 +64,15 @@ def cliente(cliente_sem_login, usuario):
     assert resposta.status_code == 200, resposta.text
     cliente_sem_login.headers["Authorization"] = f"Bearer {resposta.json()['token']}"
     return cliente_sem_login
+
+
+@pytest.fixture()
+def conta(cliente):
+    """Conta principal. Todo lançamento precisa de uma."""
+    return cliente.post("/contas", json={"nome": "Mercado Pago"}).json()
+
+
+@pytest.fixture()
+def conta2(cliente):
+    """Segunda conta, para os testes de transferência."""
+    return cliente.post("/contas", json={"nome": "Nubank", "ordem": 1}).json()

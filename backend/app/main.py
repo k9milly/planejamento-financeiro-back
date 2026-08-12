@@ -19,6 +19,7 @@ from app.routers import (
     anos,
     auth,
     categorias,
+    contas,
     gastos_fixos,
     importacao,
     lancamentos,
@@ -66,6 +67,7 @@ app.include_router(auth.router)
 protegido = [Depends(usuario_atual)]
 
 app.include_router(anos.router, dependencies=protegido)
+app.include_router(contas.router, dependencies=protegido)
 app.include_router(categorias.router, dependencies=protegido)
 app.include_router(lancamentos.router, dependencies=protegido)
 app.include_router(gastos_fixos.router, dependencies=protegido)
