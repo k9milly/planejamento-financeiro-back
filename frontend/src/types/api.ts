@@ -12,9 +12,34 @@ export type TipoLancamento =
   | 'saida'
   | 'guardado'
   | 'retirado'
-  | 'rendimento';
+  | 'rendimento'
+  | 'perda'
+  | 'transferencia';
 
 export type DestinoRendimento = 'conta' | 'guardado';
+
+export interface Conta {
+  id: number;
+  nome: string;
+  cor: string;
+  ordem: number;
+  ativa: boolean;
+}
+
+export interface SaldoInicial {
+  conta_id: number;
+  saldo: string;
+  guardado: string;
+}
+
+/** Como uma conta fechou o período. */
+export interface CarteirasConta {
+  conta_id: number;
+  nome: string;
+  cor: string;
+  saldo: string;
+  guardado: string;
+}
 export type Importancia = 'baixa' | 'media' | 'alta';
 export type SituacaoGastoFixo = 'pendente' | 'pago';
 
@@ -32,16 +57,22 @@ export interface Lancamento {
   data: string;
   valor: string;
   tipo: TipoLancamento;
+  conta_id: number;
+  conta_destino_id: number | null;
+  conta: Conta;
   destino: DestinoRendimento | null;
   categoria_id: number | null;
   categoria: Categoria | null;
   descricao: string;
+  fitid: string | null;
 }
 
 export interface NovoLancamento {
   data: string;
   valor: string;
   tipo: TipoLancamento;
+  conta_id: number;
+  conta_destino_id?: number | null;
   destino?: DestinoRendimento | null;
   categoria_id?: number | null;
   descricao?: string;
@@ -50,11 +81,10 @@ export interface NovoLancamento {
 export interface Ano {
   id: number;
   ano: number;
-  saldo_inicial_conta: string;
-  saldo_inicial_guardado: string;
   arquivado: boolean;
   arquivado_em: string | null;
   criado_em: string;
+  saldos_iniciais: SaldoInicial[];
 }
 
 export interface GastoCategoria {
@@ -72,20 +102,22 @@ export interface ResumoMes {
   saldo: string;
   saldo_inicial: string;
   guardado_acumulado: string;
-  rendimento_conta: string;
-  rendimento_guardado: string;
+  rendimentos: string;
+  perdas: string;
+  /** Quanto circulou entre contas suas. Não entra em entradas nem saídas. */
+  transferido: string;
+  por_conta: CarteirasConta[];
   gastos_por_categoria: GastoCategoria[];
 }
 
 export interface ResumoAno {
   ano: number;
   arquivado: boolean;
-  saldo_inicial_conta: string;
-  saldo_inicial_guardado: string;
   total_guardado: string;
   saldo_final: string;
   total_entradas: string;
   total_saidas: string;
+  por_conta: CarteirasConta[];
   meses: ResumoMes[];
 }
 
@@ -103,6 +135,7 @@ export interface GastoFixo {
   dia_vencimento: number;
   forma_pagamento: string;
   categoria_id: number | null;
+  conta_id: number;
   ativo: boolean;
   meses: GastoFixoMensal[];
 }
@@ -154,6 +187,8 @@ export interface TransacaoConfirmar {
   data: string;
   valor: string;
   tipo: TipoLancamento;
+  conta_id: number;
+  conta_destino_id?: number | null;
   destino?: DestinoRendimento | null;
   categoria_id?: number | null;
   descricao?: string;

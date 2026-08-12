@@ -12,6 +12,7 @@ export function TotalGuardado({ resumo }: { resumo: ResumoAno }) {
   const comMovimento = resumo.meses.filter(
     (m) => Number(m.guardado_no_mes) !== 0,
   );
+  const reservas = resumo.por_conta.filter((c) => Number(c.guardado) !== 0);
 
   return (
     <Card titulo="Total guardado">
@@ -38,6 +39,30 @@ export function TotalGuardado({ resumo }: { resumo: ResumoAno }) {
           valor={moeda(resumo.total_guardado)}
           destaque
         />
+
+        {/* Onde a reserva está: a caixinha e o investimento são lugares
+            diferentes, e o total sozinho esconderia isso. */}
+        {reservas.length > 1 && (
+          <ul className="mt-2 space-y-1">
+            {reservas.map((conta) => (
+              <li
+                key={conta.conta_id}
+                className="flex items-center justify-between text-xs"
+              >
+                <span className="flex items-center gap-1.5 text-roxo-400 dark:text-roxo-200">
+                  <span
+                    className="inline-block h-2 w-2 rounded-full"
+                    style={{ backgroundColor: conta.cor }}
+                  />
+                  {conta.nome}
+                </span>
+                <span className="tabular-nums text-roxo-500 dark:text-roxo-100">
+                  {moeda(conta.guardado)}
+                </span>
+              </li>
+            ))}
+          </ul>
+        )}
       </div>
     </Card>
   );

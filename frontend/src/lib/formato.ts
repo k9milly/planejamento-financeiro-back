@@ -54,4 +54,15 @@ export const ESTILO_TIPO = {
     classe:
       'bg-violet-100 text-violet-800 dark:bg-violet-900 dark:text-violet-200',
   },
+  perda: {
+    rotulo: 'Perda',
+    classe:
+      'bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-200',
+  },
+  // Cinza de propósito: transferência não é ganho nem gasto, e destacá-la com
+  // cor sugeriria que mexe no seu patrimônio.
+  transferencia: {
+    rotulo: 'Transferência',
+    classe: 'bg-roxo-100 text-roxo-600 dark:bg-roxo-700 dark:text-roxo-100',
+  },
 } as const;
