@@ -3,6 +3,9 @@
 fastapi==0.141.1
 uvicorn[standard]==0.34.0
 sqlalchemy==2.0.51
+alembic==1.14.1
+# Driver do Postgres. O binário evita precisar de compilador na imagem.
+psycopg[binary]==3.3.4
 pydantic==2.13.4
 pydantic-settings==2.7.0
 openpyxl==3.1.5

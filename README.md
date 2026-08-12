@@ -92,8 +92,13 @@ cd backend
 python -m venv .venv
 .venv/Scripts/activate      # Linux/macOS: source .venv/bin/activate
 pip install -r requirements.txt
+python -m scripts.migrar
 uvicorn app.main:app --reload
 ```
+
+O `scripts.migrar` cria e atualiza as tabelas. A aplicação **não** mexe no
+schema ao subir: fazer isso mascararia um deploy com o banco desatualizado.
+Rode-o sempre que atualizar o código.
 
 A API sobe em `http://localhost:8000`. A documentação interativa (Swagger) fica
 em `http://localhost:8000/docs`.
@@ -206,6 +211,7 @@ npm run lint
 
 ## Documentação adicional
 
+- [`docs/HOSPEDAGEM.md`](docs/HOSPEDAGEM.md) — publicar na internet, passo a passo
 - [`docs/ARQUITETURA.md`](docs/ARQUITETURA.md) — decisões técnicas e o porquê delas
 - [`docs/REGRAS.md`](docs/REGRAS.md) — regras de negócio em detalhe
 - [`docs/API.md`](docs/API.md) — referência dos endpoints
