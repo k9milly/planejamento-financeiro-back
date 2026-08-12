@@ -6,6 +6,8 @@ sqlalchemy==2.0.51
 pydantic==2.13.4
 pydantic-settings==2.7.0
 openpyxl==3.1.5
+# Necessário para o upload de arquivo na importação de extrato.
+python-multipart==0.0.20
 
 # Desenvolvimento
 pytest==8.3.4

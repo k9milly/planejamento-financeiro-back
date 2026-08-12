@@ -1,7 +1,9 @@
 # Dados financeiros pessoais — nunca versionar
 *.db
+*.db.bak-*
 *.sqlite
 *.sqlite3
+*.ofx
 *.xlsx
 *.xls
 *.csv
@@ -18,6 +20,7 @@ venv/
 node_modules/
 dist/
 .vite/
+*.tsbuildinfo
 
 # Ambiente
 .env
