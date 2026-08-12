@@ -33,13 +33,28 @@ servidor, instalação nem configuração, e o backup é copiar o `.db`.
 A troca para Postgres é uma variável de ambiente:
 
 ```bash
-DATABASE_URL=postgresql://usuario:senha@host/banco
+DATABASE_URL=postgresql+psycopg://usuario:senha@host/banco
 ```
 
 Nenhum outro arquivo muda — o `database.py` já trata o parâmetro
-`check_same_thread` como específico do SQLite. O que falta para produção é
-substituir `Base.metadata.create_all()` por migrações (Alembic), necessário a
-partir do momento em que houver dados que não se pode recriar.
+`check_same_thread` como específico do SQLite.
+
+### Por que Alembic, e não `create_all()`
+
+`create_all()` cria tabelas que faltam, mas **ignora colunas novas em tabelas
+que já existem**. Numa base descartável isso não incomoda; sobre dados reais é
+uma armadilha, porque a aplicação sobe normalmente e só quebra na primeira
+consulta que toca a coluna ausente — em produção, no meio do uso.
+
+Por isso a aplicação não mexe mais no schema ao iniciar. As migrações rodam
+antes, num passo explícito (`alembic upgrade head`, embrulhado em
+`scripts/migrar.py`). No container, isso acontece no comando de entrada: se a
+migração falhar, o processo morre e o deploy é abortado, em vez de servir
+contra um schema errado.
+
+Os testes continuam usando `create_all()` direto, porque cada teste cria um
+banco vazio e descarta no fim — ali o risco não existe e evita-se pagar o custo
+de rodar a cadeia de migrações a cada teste.
 
 ### Por que `Decimal`, e não `float`
 

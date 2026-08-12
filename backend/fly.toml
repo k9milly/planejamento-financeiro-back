@@ -1,0 +1,45 @@
+# Configuração do Fly.io.
+#
+# Trocar `app` pelo nome escolhido ao rodar `fly launch`. Os segredos
+# (DATABASE_URL, SECRET_KEY) NÃO ficam aqui — este arquivo vai para o git.
+# Eles são definidos com `fly secrets set`.
+
+app = "planejamento-financeiro"
+primary_region = "gru"  # São Paulo: mesma região do banco no Neon
+
+[build]
+
+[env]
+  PORT = "8000"
+
+[http_service]
+  internal_port = 8000
+  force_https = true
+
+  # A máquina hiberna sozinha quando ninguém acessa e volta ao primeiro
+  # pedido, em segundos. É o que mantém o custo perto de zero num app de uso
+  # pessoal, que fica parado a maior parte do dia.
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+
+  # Zero: nada precisa ficar de pé quando você não está usando.
+  min_machines_running = 0
+
+  [http_service.concurrency]
+    type = "requests"
+    soft_limit = 40
+    hard_limit = 80
+
+# O Fly consulta este endereço para saber se a aplicação subiu. `/saude` é a
+# única rota pública — as demais exigem sessão e responderiam 401, o que o Fly
+# interpretaria como aplicação quebrada.
+[[http_service.checks]]
+  grace_period = "15s"
+  interval = "30s"
+  method = "GET"
+  path = "/saude"
+  timeout = "5s"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"

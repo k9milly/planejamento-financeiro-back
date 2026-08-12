@@ -10,13 +10,10 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
-from app.database import criar_tabelas
-from fastapi import Depends
-
 from app.deps import usuario_atual
 from app.routers import (
     anos,
@@ -32,7 +29,14 @@ from app.routers import (
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    criar_tabelas()
+    """A aplicação não cria nem altera tabelas ao subir.
+
+    Antes ela chamava `create_all()`, o que era conveniente localmente e
+    perigoso em produção: `create_all` cria tabelas que faltam mas ignora
+    colunas novas, então um deploy com o schema desatualizado subiria
+    normalmente e só quebraria na primeira consulta. O schema é responsabilidade
+    do `alembic upgrade head`, rodado antes de iniciar.
+    """
     yield
 
 

@@ -16,10 +16,16 @@ class Settings(BaseSettings):
     app_name: str = "Planejamento Financeiro"
 
     # O banco fica ao lado do código por padrão; é um arquivo só, fácil de
-    # copiar ou fazer backup manualmente.
+    # copiar ou fazer backup manualmente. Em produção vem do ambiente, com
+    # `postgresql+psycopg://...`.
     database_url: str = f"sqlite:///{RAIZ / 'dados.db'}"
 
-    # Origens liberadas no CORS. Em produção, restringir ao domínio do frontend.
+    # Origens liberadas no CORS: quais sites podem chamar esta API pelo
+    # navegador. O padrão cobre o Vite local. Em produção, defina
+    # CORS_ORIGINS com o endereço do frontend, ex.:
+    #   CORS_ORIGINS=["https://planejamento.netlify.app"]
+    # Nunca use "*" aqui: com credenciais habilitadas, qualquer site
+    # conseguiria fazer requisições em nome de quem estivesse logado.
     cors_origins: list[str] = [
         "http://localhost:5173",
         "http://127.0.0.1:5173",
