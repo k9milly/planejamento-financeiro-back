@@ -12,6 +12,7 @@ from app.database import get_db
 from app.deps import obter_ano, obter_ano_editavel
 from app.models import (
     Ano,
+    Conta,
     GastoFixo,
     GastoFixoMensal,
     Lancamento,
@@ -47,6 +48,7 @@ def criar(
     ano_ref: Ano = Depends(obter_ano_editavel),
     db: Session = Depends(get_db),
 ) -> GastoFixo:
+    _validar_conta(dados.conta_id, db)
     gasto = GastoFixo(ano_id=ano_ref.id, **dados.model_dump())
     db.add(gasto)
     db.commit()
@@ -62,7 +64,10 @@ def atualizar(
     db: Session = Depends(get_db),
 ) -> GastoFixo:
     gasto = _obter(gasto_id, ano_ref, db)
-    for campo, valor in dados.model_dump(exclude_unset=True).items():
+    alteracoes = dados.model_dump(exclude_unset=True)
+    if "conta_id" in alteracoes:
+        _validar_conta(alteracoes["conta_id"], db)
+    for campo, valor in alteracoes.items():
         setattr(gasto, campo, valor)
     db.commit()
     db.refresh(gasto)
@@ -117,6 +122,7 @@ def pagar(
 
     lancamento = Lancamento(
         ano_id=ano_ref.id,
+        conta_id=gasto.conta_id,
         mes=mes,
         data=vencimento,
         valor=gasto.valor,
@@ -165,6 +171,14 @@ def desfazer(
     registro.lancamento_id = None
     registro.situacao = SituacaoGastoFixo.PENDENTE
     db.commit()
+
+
+def _validar_conta(conta_id: int, db: Session) -> None:
+    if db.get(Conta, conta_id) is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=f"Conta {conta_id} não existe.",
+        )
 
 
 def _obter(gasto_id: int, ano_ref: Ano, db: Session) -> GastoFixo:

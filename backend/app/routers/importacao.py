@@ -29,6 +29,7 @@ from app.schemas import (
     PreviaImportacao,
     ResultadoImportacao,
     TransacaoPrevia,
+    validar_coerencia,
 )
 from app.services.ofx import ErroOFX, ler_ofx
 
@@ -191,6 +192,8 @@ def confirmar(
         db.add(
             Lancamento(
                 ano_id=ano_ref.id,
+                conta_id=item.conta_id,
+                conta_destino_id=item.conta_destino_id,
                 mes=item.data.month,
                 data=item.data,
                 valor=item.valor,
@@ -218,21 +221,20 @@ def confirmar(
 
 def _validar_coerencia(item) -> None:
     """Mesmas regras do cadastro manual — a importação não é uma porta dos fundos."""
-    if item.tipo is TipoLancamento.RENDIMENTO and item.destino is None:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail="Rendimento exige 'destino': 'conta' ou 'guardado'.",
+
+    def erro(mensagem: str) -> HTTPException:
+        return HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=mensagem
         )
-    if item.tipo is not TipoLancamento.RENDIMENTO and item.destino is not None:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail="'destino' só se aplica a lançamentos do tipo rendimento.",
-        )
-    if item.tipo is not TipoLancamento.SAIDA and item.categoria_id is not None:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail="Somente lançamentos do tipo saída podem ter categoria.",
-        )
+
+    validar_coerencia(
+        item.tipo,
+        item.destino,
+        item.categoria_id,
+        item.conta_id,
+        item.conta_destino_id,
+        erro,
+    )
 
 
 def _criar_regra(db: Session, padrao: str, categoria_id: int) -> bool:

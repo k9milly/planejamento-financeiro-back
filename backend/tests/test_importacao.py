@@ -135,11 +135,12 @@ class TestRegras:
 
 
 class TestConfirmacao:
-    def test_grava_apenas_o_que_foi_enviado(self, cliente, ano, comida):
+    def test_grava_apenas_o_que_foi_enviado(self, cliente, ano, comida, conta):
         previa = enviar(cliente).json()
         selecionadas = [
             {
                 "fitid": t["fitid"],
+                            "conta_id": conta["id"],
                 "data": t["data"],
                 "valor": t["valor"],
                 "tipo": t["tipo_sugerido"],
@@ -159,7 +160,7 @@ class TestConfirmacao:
         assert len(lancamentos) == 2
         assert all(l["fitid"] for l in lancamentos)
 
-    def test_reimportar_o_mesmo_extrato_nao_duplica(self, cliente, ano):
+    def test_reimportar_o_mesmo_extrato_nao_duplica(self, cliente, ano, conta):
         def confirmar():
             previa = enviar(cliente).json()
             return cliente.post(
@@ -168,6 +169,7 @@ class TestConfirmacao:
                     "transacoes": [
                         {
                             "fitid": t["fitid"],
+                            "conta_id": conta["id"],
                             "data": t["data"],
                             "valor": t["valor"],
                             "tipo": t["tipo_sugerido"],
@@ -184,7 +186,7 @@ class TestConfirmacao:
         assert segunda["ignoradas_duplicadas"] == 3
         assert len(cliente.get("/anos/2026/lancamentos").json()) == 3
 
-    def test_previa_marca_o_que_ja_foi_importado(self, cliente, ano):
+    def test_previa_marca_o_que_ja_foi_importado(self, cliente, ano, conta):
         previa = enviar(cliente).json()
         cliente.post(
             "/anos/2026/importacao/ofx/confirmar",
@@ -192,6 +194,7 @@ class TestConfirmacao:
                 "transacoes": [
                     {
                         "fitid": previa["transacoes"][0]["fitid"],
+                        "conta_id": conta["id"],
                         "data": previa["transacoes"][0]["data"],
                         "valor": previa["transacoes"][0]["valor"],
                         "tipo": "saida",
@@ -204,7 +207,7 @@ class TestConfirmacao:
         assert segunda["ja_importadas"] == 1
         assert sum(t["duplicado"] for t in segunda["transacoes"]) == 1
 
-    def test_aprende_regra_ao_confirmar(self, cliente, ano, comida):
+    def test_aprende_regra_ao_confirmar(self, cliente, ano, comida, conta):
         previa = enviar(cliente).json()
         ifood = next(t for t in previa["transacoes"] if "IFOOD" in t["descricao"])
 
@@ -214,6 +217,7 @@ class TestConfirmacao:
                 "transacoes": [
                     {
                         "fitid": ifood["fitid"],
+                        "conta_id": conta["id"],
                         "data": ifood["data"],
                         "valor": ifood["valor"],
                         "tipo": "saida",
@@ -228,13 +232,14 @@ class TestConfirmacao:
         assert resultado["regras_criadas"] == 1
         assert cliente.get("/regras").json()[0]["padrao"] == "IFOOD"
 
-    def test_data_de_outro_ano_e_recusada(self, cliente, ano):
+    def test_data_de_outro_ano_e_recusada(self, cliente, ano, conta):
         resposta = cliente.post(
             "/anos/2026/importacao/ofx/confirmar",
             json={
                 "transacoes": [
                     {
                         "fitid": "x-1",
+                        "conta_id": conta["id"],
                         "data": "2025-08-05",
                         "valor": "10.00",
                         "tipo": "saida",
@@ -244,13 +249,14 @@ class TestConfirmacao:
         )
         assert resposta.status_code == 422
 
-    def test_categoria_em_entrada_e_recusada(self, cliente, ano, comida):
+    def test_categoria_em_entrada_e_recusada(self, cliente, ano, comida, conta):
         resposta = cliente.post(
             "/anos/2026/importacao/ofx/confirmar",
             json={
                 "transacoes": [
                     {
                         "fitid": "x-2",
+                        "conta_id": conta["id"],
                         "data": "2026-08-05",
                         "valor": "10.00",
                         "tipo": "entrada",
@@ -261,7 +267,7 @@ class TestConfirmacao:
         )
         assert resposta.status_code == 422
 
-    def test_importado_entra_nos_totais(self, cliente, ano, comida):
+    def test_importado_entra_nos_totais(self, cliente, ano, comida, conta):
         previa = enviar(cliente).json()
         cliente.post(
             "/anos/2026/importacao/ofx/confirmar",
@@ -269,6 +275,7 @@ class TestConfirmacao:
                 "transacoes": [
                     {
                         "fitid": t["fitid"],
+                            "conta_id": conta["id"],
                         "data": t["data"],
                         "valor": t["valor"],
                         "tipo": t["tipo_sugerido"],
@@ -287,7 +294,7 @@ class TestConfirmacao:
         assert agosto["saidas"] == "160.85"
         assert agosto["gastos_por_categoria"][0]["categoria"] == "Comida"
 
-    def test_usuario_pode_trocar_o_tipo_sugerido(self, cliente, ano):
+    def test_usuario_pode_trocar_o_tipo_sugerido(self, cliente, ano, conta):
         """Uma transferência para a poupança parece saída no extrato, mas é
         'guardado' — e o usuário corrige isso na revisão."""
         previa = enviar(cliente).json()
@@ -299,6 +306,7 @@ class TestConfirmacao:
                 "transacoes": [
                     {
                         "fitid": primeira["fitid"],
+                        "conta_id": conta["id"],
                         "data": primeira["data"],
                         "valor": primeira["valor"],
                         "tipo": "guardado",

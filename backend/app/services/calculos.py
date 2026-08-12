@@ -4,9 +4,14 @@ Este é o módulo que substitui as fórmulas SUMIF da planilha original. Ele é
 puro: recebe lançamentos e devolve números, sem tocar no banco. Isso mantém as
 regras testáveis isoladamente (ver `tests/test_calculos.py`).
 
-Diferença importante em relação à planilha: lá o saldo de abertura de cada mês
-era digitado à mão em cada aba, o que fazia os meses se desencontrarem. Aqui os
-meses são **encadeados**: o fechamento de um é a abertura do seguinte.
+Duas diferenças em relação à planilha:
+
+* Os meses são **encadeados** — o fechamento de um é a abertura do seguinte.
+  Na planilha, cada aba trazia o saldo de abertura digitado à mão, e eles se
+  desencontravam.
+* O dinheiro vive em **contas**, cada uma com saldo disponível e reserva. Mover
+  dinheiro entre contas suas não é receita nem despesa, e não entra nos totais
+  de entradas e saídas do mês.
 """
 
 from __future__ import annotations
@@ -27,88 +32,149 @@ def _d(valor) -> Decimal:
 
 
 @dataclass
+class Carteiras:
+    """O que uma conta tem: disponível para gastar e reservado."""
+
+    saldo: Decimal = ZERO
+    guardado: Decimal = ZERO
+
+    @property
+    def total(self) -> Decimal:
+        return self.saldo + self.guardado
+
+
+@dataclass
 class TotaisMes:
     """Os números do container 'Total de {mês}'."""
 
     mes: int
+
+    # Movimentações de verdade: só o que entrou ou saiu do seu patrimônio.
+    # Transferências entre contas suas ficam fora de propósito.
     entradas: Decimal = ZERO
     saidas: Decimal = ZERO
-    rendimento_conta: Decimal = ZERO
-    rendimento_guardado: Decimal = ZERO
-    guardado_bruto: Decimal = ZERO  # quanto foi movido da conta para a reserva
-    retirado: Decimal = ZERO  # quanto voltou da reserva para a conta
+    rendimentos: Decimal = ZERO
+    perdas: Decimal = ZERO
 
-    saldo_inicial: Decimal = ZERO
-    saldo: Decimal = ZERO  # saldo de fechamento da conta
+    guardado_bruto: Decimal = ZERO  # movido do saldo para a reserva
+    retirado: Decimal = ZERO  # devolvido da reserva para o saldo
+    transferido: Decimal = ZERO  # circulou entre contas suas
 
-    guardado_no_mes: Decimal = ZERO  # variação líquida da reserva no mês
-    guardado_acumulado: Decimal = ZERO  # reserva total ao fim do mês
+    # Fechamento por conta e consolidado.
+    por_conta: dict[int, Carteiras] = field(default_factory=dict)
+    abertura_por_conta: dict[int, Carteiras] = field(default_factory=dict)
 
     gastos_por_categoria: dict[str, Decimal] = field(default_factory=dict)
+
+    @property
+    def saldo(self) -> Decimal:
+        """Disponível somando todas as contas."""
+        return sum((c.saldo for c in self.por_conta.values()), ZERO)
+
+    @property
+    def saldo_inicial(self) -> Decimal:
+        return sum((c.saldo for c in self.abertura_por_conta.values()), ZERO)
+
+    @property
+    def guardado_acumulado(self) -> Decimal:
+        """Reserva somando todas as contas."""
+        return sum((c.guardado for c in self.por_conta.values()), ZERO)
+
+    @property
+    def guardado_no_mes(self) -> Decimal:
+        """Quanto a reserva variou no mês, somando todas as contas."""
+        anterior = sum((c.guardado for c in self.abertura_por_conta.values()), ZERO)
+        return self.guardado_acumulado - anterior
+
+
+def _copiar(origem: dict[int, Carteiras]) -> dict[int, Carteiras]:
+    return {
+        conta_id: Carteiras(saldo=c.saldo, guardado=c.guardado)
+        for conta_id, c in origem.items()
+    }
 
 
 def calcular_totais_mes(
     mes: int,
     lancamentos: Iterable[Lancamento],
-    saldo_inicial: Decimal,
-    guardado_inicial: Decimal,
+    abertura: dict[int, Carteiras],
 ) -> TotaisMes:
     """Totaliza um único mês a partir de seus lançamentos.
 
-    `saldo_inicial` e `guardado_inicial` são os valores de fechamento do mês
-    anterior (ou os saldos de abertura do ano, se for o primeiro mês).
+    `abertura` traz as carteiras de cada conta no fechamento do mês anterior.
     """
-    t = TotaisMes(mes=mes, saldo_inicial=saldo_inicial)
+    totais = TotaisMes(
+        mes=mes,
+        abertura_por_conta=_copiar(abertura),
+        por_conta=_copiar(abertura),
+    )
     por_categoria: dict[str, Decimal] = defaultdict(lambda: ZERO)
+
+    def carteiras(conta_id: int) -> Carteiras:
+        """Contas criadas depois do início do ano começam zeradas."""
+        return totais.por_conta.setdefault(conta_id, Carteiras())
 
     for lanc in lancamentos:
         valor = _d(lanc.valor)
+        conta = carteiras(lanc.conta_id)
 
         if lanc.tipo is TipoLancamento.ENTRADA:
-            t.entradas += valor
+            conta.saldo += valor
+            totais.entradas += valor
+
         elif lanc.tipo is TipoLancamento.SAIDA:
-            t.saidas += valor
+            conta.saldo -= valor
+            totais.saidas += valor
             nome = lanc.categoria.nome if lanc.categoria else "Sem categoria"
             por_categoria[nome] += valor
+
         elif lanc.tipo is TipoLancamento.GUARDADO:
-            t.guardado_bruto += valor
+            conta.saldo -= valor
+            conta.guardado += valor
+            totais.guardado_bruto += valor
+
         elif lanc.tipo is TipoLancamento.RETIRADO:
-            t.retirado += valor
+            conta.guardado -= valor
+            conta.saldo += valor
+            totais.retirado += valor
+
         elif lanc.tipo is TipoLancamento.RENDIMENTO:
+            # Sem destino explícito assumimos conta — é o caso mais comum e
+            # evita que um dado incompleto suma do saldo.
             if lanc.destino is DestinoRendimento.GUARDADO:
-                t.rendimento_guardado += valor
+                conta.guardado += valor
             else:
-                # Sem destino explícito assumimos conta — é o caso mais comum e
-                # evita que um dado incompleto suma do saldo.
-                t.rendimento_conta += valor
+                conta.saldo += valor
+            totais.rendimentos += valor
 
-    # Conta: entra o que recebi, o que rendeu nela e o que voltou da reserva;
-    # sai o que gastei e o que mandei para a reserva.
-    t.saldo = (
-        saldo_inicial
-        + t.entradas
-        + t.rendimento_conta
-        + t.retirado
-        - t.saidas
-        - t.guardado_bruto
-    )
+        elif lanc.tipo is TipoLancamento.PERDA:
+            if lanc.destino is DestinoRendimento.GUARDADO:
+                conta.guardado -= valor
+            else:
+                conta.saldo -= valor
+            totais.perdas += valor
 
-    # Reserva: entra o que guardei e o que rendeu nela; sai o que retirei.
-    t.guardado_no_mes = t.guardado_bruto + t.rendimento_guardado - t.retirado
-    t.guardado_acumulado = guardado_inicial + t.guardado_no_mes
+        elif lanc.tipo is TipoLancamento.TRANSFERENCIA:
+            # O patrimônio não muda: o dinheiro só troca de conta. Por isso não
+            # entra em entradas nem em saídas.
+            conta.saldo -= valor
+            if lanc.conta_destino_id is not None:
+                carteiras(lanc.conta_destino_id).saldo += valor
+            totais.transferido += valor
 
-    t.gastos_por_categoria = dict(
+    totais.gastos_por_categoria = dict(
         sorted(por_categoria.items(), key=lambda kv: kv[1], reverse=True)
     )
-    return t
+    return totais
 
 
 def calcular_ano(
     lancamentos: Sequence[Lancamento],
-    saldo_inicial_conta: Decimal,
-    saldo_inicial_guardado: Decimal,
+    aberturas: dict[int, Carteiras],
 ) -> list[TotaisMes]:
     """Totaliza os 12 meses em sequência, encadeando os saldos.
+
+    `aberturas` mapeia conta -> carteiras no começo do ano.
 
     Devolve sempre 12 entradas (janeiro a dezembro), mesmo que alguns meses não
     tenham lançamento algum — a interface precisa das 12 páginas.
@@ -118,14 +184,12 @@ def calcular_ano(
         por_mes[lanc.mes].append(lanc)
 
     resultado: list[TotaisMes] = []
-    saldo = _d(saldo_inicial_conta)
-    guardado = _d(saldo_inicial_guardado)
+    atual = _copiar(aberturas)
 
     for mes in range(1, 13):
-        totais = calcular_totais_mes(mes, por_mes.get(mes, []), saldo, guardado)
+        totais = calcular_totais_mes(mes, por_mes.get(mes, []), atual)
         resultado.append(totais)
-        saldo = totais.saldo
-        guardado = totais.guardado_acumulado
+        atual = _copiar(totais.por_conta)
 
     return resultado
 
