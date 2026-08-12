@@ -34,6 +34,7 @@ def pedir_email() -> str:
 
 
 def pedir_senha() -> str:
+    print("(a senha não aparece na tela enquanto você digita — é assim mesmo)")
     senha = getpass.getpass("Senha: ")
     if len(senha) < MINIMO_SENHA:
         print(
@@ -77,4 +78,10 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except (KeyboardInterrupt, EOFError):
+        # Ctrl+C ou terminal sem entrada interativa: sai limpo, sem despejar um
+        # traceback que não diz nada a quem só queria criar um usuário.
+        print("\nCancelado. Nenhum usuário foi criado ou alterado.")
+        sys.exit(1)
