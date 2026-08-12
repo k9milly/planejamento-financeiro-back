@@ -1,8 +1,10 @@
-import { useState, type ChangeEvent } from 'react';
+import { useEffect, useState, type ChangeEvent } from 'react';
 import { api } from '../lib/api';
 import { diaMes, ESTILO_TIPO, moeda } from '../lib/formato';
 import type {
   Categoria,
+  Conta,
+  DestinoRendimento,
   PreviaImportacao,
   TipoLancamento,
   TransacaoConfirmar,
@@ -12,17 +14,29 @@ import type {
 interface Props {
   ano: number;
   categorias: Categoria[];
+  contas: Conta[];
   aoFechar: () => void;
   aoImportar: () => Promise<void>;
 }
 
-const TIPOS = Object.keys(ESTILO_TIPO) as TipoLancamento[];
+/**
+ * Transferência fica de fora: ela precisa de uma segunda conta, e o extrato de
+ * um banco só mostra a perna que saiu. Para registrá-la, use o formulário do
+ * mês, onde dá para escolher origem e destino.
+ */
+const TIPOS = (Object.keys(ESTILO_TIPO) as TipoLancamento[]).filter(
+  (t) => t !== 'transferencia',
+);
+
+/** Tipos que precisam saber qual carteira foi afetada. */
+const COM_DESTINO: TipoLancamento[] = ['rendimento', 'perda'];
 
 /** O que o usuário decidiu sobre cada linha da prévia. */
 interface Escolha {
   incluir: boolean;
   tipo: TipoLancamento;
   categoriaId: string;
+  destino: DestinoRendimento;
   padrao: string;
 }
 
@@ -36,6 +50,7 @@ interface Escolha {
 export function ImportarExtrato({
   ano,
   categorias,
+  contas,
   aoFechar,
   aoImportar,
 }: Props) {
@@ -44,6 +59,13 @@ export function ImportarExtrato({
   const [ocupado, setOcupado] = useState(false);
   const [erro, setErro] = useState('');
   const [resultado, setResultado] = useState('');
+  // De qual conta é o extrato. Vale para todas as linhas do arquivo: um
+  // extrato vem sempre de um banco só.
+  const [contaId, setContaId] = useState('');
+
+  useEffect(() => {
+    if (!contaId && contas.length) setContaId(String(contas[0].id));
+  }, [contas, contaId]);
 
   async function selecionarArquivo(evento: ChangeEvent<HTMLInputElement>) {
     const arquivo = evento.target.files?.[0];
@@ -67,6 +89,7 @@ export function ImportarExtrato({
               categoriaId: t.categoria_sugerida_id
                 ? String(t.categoria_sugerida_id)
                 : '',
+              destino: 'guardado',
               padrao: '',
             },
           ]),
@@ -101,11 +124,12 @@ export function ImportarExtrato({
           const ehSaida = escolha.tipo === 'saida';
           return {
             fitid: t.fitid,
+            conta_id: Number(contaId),
             data: t.data,
             valor: t.valor,
             tipo: escolha.tipo,
             // O backend recusa destino/categoria em tipos que não os aceitam.
-            destino: escolha.tipo === 'rendimento' ? 'conta' : null,
+            destino: COM_DESTINO.includes(escolha.tipo) ? escolha.destino : null,
             categoria_id:
               ehSaida && escolha.categoriaId ? Number(escolha.categoriaId) : null,
             descricao: t.descricao,
@@ -165,11 +189,25 @@ export function ImportarExtrato({
               Baixe o extrato em <strong>OFX</strong> pelo aplicativo do banco e
               selecione o arquivo. Nada é gravado até você revisar e confirmar.
             </p>
+            <label className="block text-sm text-roxo-500 dark:text-roxo-200">
+              Conta deste extrato
+              <select
+                value={contaId}
+                onChange={(e) => setContaId(e.target.value)}
+                className="mt-1 block w-full rounded-lg border border-roxo-100 px-3 py-2 text-sm dark:border-roxo-700"
+              >
+                {contas.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.nome}
+                  </option>
+                ))}
+              </select>
+            </label>
             <input
               type="file"
               accept=".ofx,application/x-ofx,text/plain"
               onChange={selecionarArquivo}
-              disabled={ocupado}
+              disabled={ocupado || !contaId}
               aria-label="Arquivo OFX"
               className="block w-full text-sm text-roxo-500 file:mr-3 file:rounded-lg file:border-0 file:bg-roxo-500 file:px-4 file:py-2 file:text-sm file:font-medium file:text-white hover:file:bg-roxo-400 dark:text-roxo-200"
             />
@@ -328,7 +366,7 @@ function Linha({
         </select>
       </td>
       <td className="py-2">
-        {escolha.tipo === 'saida' ? (
+        {escolha.tipo === 'saida' && (
           <select
             value={escolha.categoriaId}
             onChange={(e) => aoAlterar({ categoriaId: e.target.value })}
@@ -342,7 +380,22 @@ function Linha({
               </option>
             ))}
           </select>
-        ) : (
+        )}
+        {/* Rendimento e perda precisam saber qual carteira mexeu. */}
+        {COM_DESTINO.includes(escolha.tipo) && (
+          <select
+            value={escolha.destino}
+            onChange={(e) =>
+              aoAlterar({ destino: e.target.value as DestinoRendimento })
+            }
+            className={campo}
+            aria-label={`Onde, em ${transacao.descricao}`}
+          >
+            <option value="guardado">No guardado</option>
+            <option value="conta">Na conta</option>
+          </select>
+        )}
+        {escolha.tipo !== 'saida' && !COM_DESTINO.includes(escolha.tipo) && (
           <span className="text-xs text-roxo-300">—</span>
         )}
       </td>

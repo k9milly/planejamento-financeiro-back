@@ -3,9 +3,11 @@
 import type {
   Ano,
   Categoria,
+  Conta,
   Desejo,
   GastoFixo,
   Importancia,
+  SaldoInicial,
   Lancamento,
   NovoLancamento,
   PreviaImportacao,
@@ -112,6 +114,23 @@ export const api = {
 
   resumo: (ano: number) => requisitar<ResumoAno>(`/anos/${ano}/resumo`),
 
+  listarContas: () => requisitar<Conta[]>('/contas'),
+
+  criarConta: (nome: string, cor?: string, ordem?: number) =>
+    requisitar<Conta>('/contas', {
+      method: 'POST',
+      body: JSON.stringify({ nome, ...(cor ? { cor } : {}), ordem: ordem ?? 0 }),
+    }),
+
+  excluirConta: (id: number) =>
+    requisitar<void>(`/contas/${id}`, { method: 'DELETE' }),
+
+  definirSaldosIniciais: (ano: number, saldos: SaldoInicial[]) =>
+    requisitar<Ano>(`/anos/${ano}/saldos-iniciais`, {
+      method: 'PUT',
+      body: JSON.stringify(saldos),
+    }),
+
   listarCategorias: () => requisitar<Categoria[]>('/categorias'),
 
   criarCategoria: (nome: string, cor?: string) =>
@@ -156,6 +175,7 @@ export const api = {
       descricao: string;
       valor: string;
       dia_vencimento: number;
+      conta_id: number;
       categoria_id?: number | null;
     },
   ) =>

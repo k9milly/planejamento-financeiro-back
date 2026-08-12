@@ -1,17 +1,19 @@
-import { useState, type FormEvent } from 'react';
+import { useEffect, useState, type FormEvent } from 'react';
 import { Card } from './Card';
 import { moeda } from '../lib/formato';
-import type { Categoria, GastoFixo } from '../types/api';
+import type { Categoria, Conta, GastoFixo } from '../types/api';
 
 interface Props {
   gastos: GastoFixo[];
   categorias: Categoria[];
+  contas: Conta[];
   mes: number;
   somenteLeitura: boolean;
   aoCriar: (dados: {
     descricao: string;
     valor: string;
     dia_vencimento: number;
+    conta_id: number;
     categoria_id?: number | null;
   }) => Promise<void>;
   aoAlternar: (gasto: GastoFixo, pago: boolean) => Promise<void>;
@@ -27,6 +29,7 @@ interface Props {
 export function GastosFixos({
   gastos,
   categorias,
+  contas,
   mes,
   somenteLeitura,
   aoCriar,
@@ -38,7 +41,13 @@ export function GastosFixos({
   const [valor, setValor] = useState('');
   const [dia, setDia] = useState('1');
   const [categoriaId, setCategoriaId] = useState('');
+  const [contaId, setContaId] = useState('');
   const [erro, setErro] = useState('');
+
+  // Seleciona a primeira conta assim que a lista chega.
+  useEffect(() => {
+    if (!contaId && contas.length) setContaId(String(contas[0].id));
+  }, [contas, contaId]);
 
   const ativos = gastos.filter((g) => g.ativo);
   const estaPago = (gasto: GastoFixo) =>
@@ -57,6 +66,7 @@ export function GastosFixos({
         descricao,
         valor,
         dia_vencimento: Number(dia),
+        conta_id: Number(contaId),
         categoria_id: categoriaId ? Number(categoriaId) : null,
       });
       setDescricao('');
@@ -115,6 +125,21 @@ export function GastosFixos({
               required
             />
             <select
+              value={contaId}
+              onChange={(e) => setContaId(e.target.value)}
+              className={`${campo} flex-1`}
+              aria-label="Conta"
+              required
+            >
+              {contas.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.nome}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <select
               value={categoriaId}
               onChange={(e) => setCategoriaId(e.target.value)}
               className={`${campo} flex-1`}
@@ -164,6 +189,10 @@ export function GastosFixos({
                   </p>
                   <p className="text-xs text-roxo-300">
                     vence dia {gasto.dia_vencimento}
+                    {contas.length > 1 &&
+                      ` · ${
+                        contas.find((c) => c.id === gasto.conta_id)?.nome ?? ''
+                      }`}
                   </p>
                 </div>
                 <span className="tabular-nums text-sm font-medium text-roxo-700 dark:text-roxo-50">

@@ -8,6 +8,7 @@ import { FormularioLancamento } from './components/FormularioLancamento';
 import { GastosFixos } from './components/GastosFixos';
 import { GastosPorCategoria } from './components/GastosPorCategoria';
 import { GerenciadorAnos } from './components/GerenciadorAnos';
+import { GerenciadorContas } from './components/GerenciadorContas';
 import { ImportarExtrato } from './components/ImportarExtrato';
 import { Login } from './components/Login';
 import { sessao } from './lib/sessao';
@@ -18,6 +19,7 @@ import { Wishlist } from './components/Wishlist';
 import type {
   Ano,
   Categoria,
+  Conta,
   Desejo,
   GastoFixo,
   Lancamento,
@@ -33,6 +35,7 @@ export default function App() {
   const [resumo, setResumo] = useState<ResumoAno | null>(null);
   const [lancamentos, setLancamentos] = useState<Lancamento[]>([]);
   const [categorias, setCategorias] = useState<Categoria[]>([]);
+  const [contas, setContas] = useState<Conta[]>([]);
   const [gastosFixos, setGastosFixos] = useState<GastoFixo[]>([]);
   const [desejos, setDesejos] = useState<Desejo[]>([]);
   const [erro, setErro] = useState('');
@@ -69,14 +72,23 @@ export default function App() {
     setCarregando(true);
     (async () => {
       try {
-        const [listaAnos, listaCategorias] = await Promise.all([
+        const [listaAnos, listaCategorias, listaContas] = await Promise.all([
           carregarAnos(),
           api.listarCategorias(),
+          api.listarContas(),
         ]);
         setCategorias(listaCategorias);
-        // Prefere um ano não arquivado; se todos estiverem, mostra o mais recente.
-        const ativo = listaAnos.find((a) => !a.arquivado) ?? listaAnos[0];
-        setAnoAtual(ativo?.ano ?? null);
+        setContas(listaContas);
+        // Abre no ano corrente. Sem ele, cai no não arquivado mais recente —
+        // e, se todos estiverem arquivados, no último. Antes abria sempre no
+        // mais recente, então criar 2027 para planejar fazia o app abrir numa
+        // tela vazia enquanto o ano em uso ficava escondido no seletor.
+        const atual = new Date().getFullYear();
+        const escolhido =
+          listaAnos.find((a) => a.ano === atual) ??
+          listaAnos.find((a) => !a.arquivado) ??
+          listaAnos[0];
+        setAnoAtual(escolhido?.ano ?? null);
       } catch (e) {
         setErro(e instanceof Error ? e.message : 'Falha ao carregar os dados.');
       } finally {
@@ -88,17 +100,24 @@ export default function App() {
   const recarregar = useCallback(async () => {
     if (anoAtual === null) return;
     try {
-      const [novoResumo, novosLancamentos, novosGastos, novosDesejos] =
-        await Promise.all([
-          api.resumo(anoAtual),
-          api.listarLancamentos(anoAtual, mesAtual),
-          api.listarGastosFixos(anoAtual),
-          api.listarWishlist(anoAtual),
-        ]);
+      const [
+        novoResumo,
+        novosLancamentos,
+        novosGastos,
+        novosDesejos,
+        novasContas,
+      ] = await Promise.all([
+        api.resumo(anoAtual),
+        api.listarLancamentos(anoAtual, mesAtual),
+        api.listarGastosFixos(anoAtual),
+        api.listarWishlist(anoAtual),
+        api.listarContas(),
+      ]);
       setResumo(novoResumo);
       setLancamentos(novosLancamentos);
       setGastosFixos(novosGastos);
       setDesejos(novosDesejos);
+      setContas(novasContas);
       setErro('');
     } catch (e) {
       setErro(e instanceof Error ? e.message : 'Falha ao carregar o mês.');
@@ -253,6 +272,7 @@ export default function App() {
             <ImportarExtrato
               ano={anoAtual}
               categorias={categorias}
+              contas={contas}
               aoFechar={() => setImportando(false)}
               aoImportar={recarregar}
             />
@@ -265,9 +285,24 @@ export default function App() {
             <TotaisMes mes={mes} />
             <GastosPorCategoria mes={mes} />
 
+            <GerenciadorContas
+              contas={contas}
+              posicao={mes.por_conta}
+              somenteLeitura={arquivado}
+              aoCriar={async (nome, cor) => {
+                await api.criarConta(nome, cor, contas.length);
+                await recarregar();
+              }}
+              aoExcluir={async (id) => {
+                await api.excluirConta(id);
+                await recarregar();
+              }}
+            />
+
             <GastosFixos
               gastos={gastosFixos}
               categorias={categorias}
+              contas={contas}
               mes={mesAtual}
               somenteLeitura={arquivado}
               aoCriar={acao(api.criarGastoFixo)}
@@ -297,6 +332,7 @@ export default function App() {
                 <FormularioLancamento
                   ano={anoAtual}
                   mes={mesAtual}
+                  contas={contas}
                   categorias={categorias}
                   aoSalvar={acao(api.criarLancamento)}
                 />
@@ -304,6 +340,7 @@ export default function App() {
               <TabelaLancamentos
                 titulo={NOMES_MESES[mesAtual - 1]}
                 lancamentos={lancamentos}
+                contas={contas}
                 somenteLeitura={arquivado}
                 aoExcluir={acao(api.excluirLancamento)}
               />
