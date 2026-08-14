@@ -7,6 +7,9 @@ A URL de destino é o "connection string" que o Neon mostra ao criar o banco.
 Troque o prefixo `postgresql://` por `postgresql+psycopg://` — é o que diz ao
 SQLAlchemy qual driver usar.
 
+A origem é sempre o SQLite local, independente de `DATABASE_URL`. Use
+`--origem` para copiar de outro lugar.
+
 O destino precisa estar com o schema criado (`alembic upgrade head` apontando
 para ele) e **vazio**: o script se recusa a copiar sobre tabelas com dados,
 para não misturar dois históricos.
@@ -23,23 +26,28 @@ import sys
 from sqlalchemy import create_engine, func, select
 from sqlalchemy.orm import sessionmaker
 
-from app.config import settings
+from app.config import RAIZ
 from app.models import (
     Ano,
     Categoria,
+    Conta,
     GastoFixo,
     GastoFixoMensal,
     ItemWishlist,
     Lancamento,
     RegraCategorizacao,
+    SaldoInicial,
     Usuario,
 )
 
-# Da tabela sem dependências para a mais dependente.
+# Da tabela sem dependências para a mais dependente. Uma conta precisa existir
+# antes de qualquer lançamento ou saldo apontar para ela.
 ORDEM = [
     Usuario,
     Categoria,
+    Conta,
     Ano,
+    SaldoInicial,
     RegraCategorizacao,
     GastoFixo,
     Lancamento,
@@ -47,13 +55,31 @@ ORDEM = [
     ItemWishlist,
 ]
 
+# A origem é o banco local, e não `settings.database_url`: na hora de copiar, a
+# variável DATABASE_URL costuma já estar apontando para o destino — foi assim
+# que uma execução copiou o banco novo (vazio) sobre ele mesmo.
+ORIGEM_PADRAO = f"sqlite:///{RAIZ / 'dados.db'}"
+
+# Tabelas que o destino precisa ter vazias. `contas` fica de fora porque a
+# própria migração já cria as duas contas iniciais — um destino recém-migrado
+# tem linhas ali por construção, e exigi-lo vazio impediria qualquer cópia.
+DEVEM_ESTAR_VAZIAS = [m for m in ORDEM if m is not Conta]
+
 
 def colunas(modelo) -> list[str]:
     return [coluna.name for coluna in modelo.__table__.columns]
 
 
-def copiar(destino_url: str, simular: bool) -> None:
-    origem = create_engine(settings.database_url)
+def copiar(origem_url: str, destino_url: str, simular: bool) -> None:
+    if origem_url == destino_url:
+        print(
+            "ERRO: origem e destino são o mesmo banco. Confira se a variável "
+            "DATABASE_URL não está apontando para o destino.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    origem = create_engine(origem_url)
     destino = create_engine(destino_url)
 
     SessaoOrigem = sessionmaker(bind=origem)
@@ -63,7 +89,7 @@ def copiar(destino_url: str, simular: bool) -> None:
         # Recusa destino sujo antes de escrever qualquer coisa.
         ocupadas = [
             modelo.__tablename__
-            for modelo in ORDEM
+            for modelo in DEVEM_ESTAR_VAZIAS
             if escrita.scalar(select(func.count()).select_from(modelo)) > 0
         ]
         if ocupadas:
@@ -81,9 +107,11 @@ def copiar(destino_url: str, simular: bool) -> None:
             nomes = colunas(modelo)
 
             for registro in registros:
-                # Copia por valor, preservando os ids: as chaves estrangeiras
-                # entre as tabelas dependem deles.
-                escrita.add(
+                # `merge` em vez de `add`: preserva os ids, de que as chaves
+                # estrangeiras dependem, e sobrescreve linhas que já existam —
+                # o caso das contas criadas pela migração. Sem isso, a cópia
+                # esbarraria em conflito de chave primária.
+                escrita.merge(
                     modelo(**{nome: getattr(registro, nome) for nome in nomes})
                 )
 
@@ -135,14 +163,20 @@ def main() -> None:
         "destino", help="URL do Postgres (postgresql+psycopg://usuario:senha@host/banco)"
     )
     parser.add_argument(
+        "--origem",
+        default=ORIGEM_PADRAO,
+        help="Banco de onde copiar (padrão: o SQLite local do projeto)",
+    )
+    parser.add_argument(
         "--simular", action="store_true", help="Mostra o que seria copiado sem gravar"
     )
     args = parser.parse_args()
 
-    print(f"Origem : {settings.database_url}")
-    print(f"Destino: {args.destino.split('@')[-1]}\n")  # esconde a senha
+    # Esconde a senha: a URL do Postgres é uma credencial.
+    print(f"Origem : {args.origem.split('@')[-1]}")
+    print(f"Destino: {args.destino.split('@')[-1]}\n")
 
-    copiar(args.destino, args.simular)
+    copiar(args.origem, args.destino, args.simular)
 
 
 if __name__ == "__main__":
