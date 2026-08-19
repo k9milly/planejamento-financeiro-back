@@ -24,6 +24,7 @@ from app.routers import (
     importacao,
     lancamentos,
     regras,
+    telegram,
     wishlist,
 )
 
@@ -60,6 +61,10 @@ app.add_middleware(
 )
 
 app.include_router(auth.router)
+
+# O webhook do Telegram tem sua própria proteção (segredo no cabeçalho + chat
+# autorizado) — o Telegram não tem como carregar o token de sessão da API.
+app.include_router(telegram.router)
 
 # Toda rota de dados exige sessão. Aplicado no registro do router, e não em
 # cada função, para que uma rota nova nasça protegida — esquecer o decorador em

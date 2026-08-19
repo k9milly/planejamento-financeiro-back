@@ -9,7 +9,6 @@ amigo, e uma transferência para a poupança parece uma saída comum. Quem decid
 
 from __future__ import annotations
 
-import unicodedata
 from datetime import date
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
@@ -17,13 +16,7 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.deps import obter_ano_editavel
-from app.models import (
-    Ano,
-    Categoria,
-    Lancamento,
-    RegraCategorizacao,
-    TipoLancamento,
-)
+from app.models import Ano, Lancamento, RegraCategorizacao, TipoLancamento
 from app.schemas import (
     ConfirmarImportacao,
     PreviaImportacao,
@@ -31,6 +24,7 @@ from app.schemas import (
     TransacaoPrevia,
     validar_coerencia,
 )
+from app.services.categorizacao import normalizar, sugerir_categoria
 from app.services.ofx import ErroOFX, ler_ofx
 
 router = APIRouter(prefix="/anos/{ano}/importacao", tags=["importação"])
@@ -38,32 +32,6 @@ router = APIRouter(prefix="/anos/{ano}/importacao", tags=["importação"])
 # Extratos são arquivos de texto pequenos; qualquer coisa maior que isso não é
 # um extrato e não vale a pena carregar na memória.
 TAMANHO_MAXIMO = 10 * 1024 * 1024
-
-
-def normalizar(texto: str) -> str:
-    """Maiúsculas e sem acento, para casar regras independente de digitação."""
-    sem_acento = unicodedata.normalize("NFKD", texto)
-    return "".join(c for c in sem_acento if not unicodedata.combining(c)).upper()
-
-
-def _sugerir_categoria(
-    descricao: str, regras: list[tuple[str, Categoria]]
-) -> Categoria | None:
-    """Regra cujo padrão aparece na descrição.
-
-    Em empate, vence o padrão mais longo — o mais específico. Sem isso, uma
-    regra genérica como "MERCADO" ganharia de "MERCADO LIVRE" por acaso da
-    ordem de inserção.
-
-    Recebe pares já normalizados em vez das entidades: normalizar o atributo do
-    objeto ORM o marcaria como alterado e o SQLAlchemy gravaria a mudança no
-    banco no próximo flush.
-    """
-    alvo = normalizar(descricao)
-    candidatas = [(p, c) for p, c in regras if p in alvo]
-    if not candidatas:
-        return None
-    return max(candidatas, key=lambda par: len(par[0]))[1]
 
 
 @router.post(
@@ -115,7 +83,7 @@ async def previa(
             ja_importadas += 1
 
         categoria = (
-            _sugerir_categoria(transacao.descricao, regras)
+            sugerir_categoria(transacao.descricao, regras)
             if transacao.saida
             else None
         )
