@@ -64,5 +64,21 @@ class Settings(BaseSettings):
     # login toda hora no celular faria a pessoa desistir de usar.
     token_expira_horas: int = 24 * 30
 
+    # Lançamento rápido por mensagem do Telegram. As três variáveis vêm
+    # juntas: sem qualquer uma delas, a rota do webhook responde 404 e o
+    # recurso fica desativado — não há um "meio ligado".
+    telegram_bot_token: str = ""
+
+    # Verificado contra o cabeçalho X-Telegram-Bot-Api-Secret-Token, que o
+    # Telegram reenvia em toda chamada ao webhook depois de configurado via
+    # `setWebhook`. Sem isso, qualquer pessoa que descobrisse a URL do webhook
+    # conseguiria forjar lançamentos na sua conta.
+    telegram_webhook_secret: str = ""
+
+    # Só mensagens vindas deste chat viram lançamento; qualquer outro
+    # remetente é ignorado em silêncio — nem confirma, nem nega, para não
+    # revelar que o bot existe a quem não deveria falar com ele.
+    telegram_chat_id: int = 0
+
 
 settings = Settings()

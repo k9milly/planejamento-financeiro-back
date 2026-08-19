@@ -212,6 +212,7 @@ npm run lint
 ## Documentação adicional
 
 - [`docs/HOSPEDAGEM.md`](docs/HOSPEDAGEM.md) — publicar na internet, passo a passo
+- [`docs/TELEGRAM.md`](docs/TELEGRAM.md) — lançamento rápido por mensagem, passo a passo
 - [`docs/ARQUITETURA.md`](docs/ARQUITETURA.md) — decisões técnicas e o porquê delas
 - [`docs/REGRAS.md`](docs/REGRAS.md) — regras de negócio em detalhe
 - [`docs/API.md`](docs/API.md) — referência dos endpoints
