@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import json
 import secrets
 from pathlib import Path
+from typing import Annotated
 
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import field_validator
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 RAIZ = Path(__file__).resolve().parent.parent
 
@@ -22,14 +25,33 @@ class Settings(BaseSettings):
 
     # Origens liberadas no CORS: quais sites podem chamar esta API pelo
     # navegador. O padrão cobre o Vite local. Em produção, defina
-    # CORS_ORIGINS com o endereço do frontend, ex.:
-    #   CORS_ORIGINS=["https://planejamento.netlify.app"]
-    # Nunca use "*" aqui: com credenciais habilitadas, qualquer site
-    # conseguiria fazer requisições em nome de quem estivesse logado.
-    cors_origins: list[str] = [
+    # CORS_ORIGINS com o(s) endereço(s) do frontend, separados por vírgula
+    # se houver mais de um — sem colchetes, sem aspas:
+    #   CORS_ORIGINS=https://planejamento.netlify.app
+    # `NoDecode` desliga a decodificação JSON automática do pydantic-settings
+    # para este campo: por padrão, uma lista é sempre lida como JSON, e um
+    # terminal (PowerShell, principalmente) troca ou perde aspas com
+    # facilidade ao repassar `["..."]` — foi exatamente isso que derrubou a
+    # aplicação em produção num crash-loop, sem nenhuma mensagem visível para
+    # quem só olhava o navegador. O parser abaixo aceita tanto o formato
+    # simples (recomendado) quanto JSON, para não quebrar quem já configurou
+    # do jeito antigo.
+    cors_origins: Annotated[list[str], NoDecode] = [
         "http://localhost:5173",
         "http://127.0.0.1:5173",
     ]
+
+    @field_validator("cors_origins", mode="before")
+    @classmethod
+    def _ler_cors_origins(cls, valor: object) -> object:
+        if not isinstance(valor, str):
+            return valor
+        texto = valor.strip()
+        if not texto:
+            return []
+        if texto.startswith("["):
+            return json.loads(texto)
+        return [origem.strip() for origem in texto.split(",") if origem.strip()]
 
     # Chave que assina os tokens de sessão. O padrão é aleatório a cada
     # inicialização: em desenvolvimento isso só derruba a sessão ao reiniciar,
