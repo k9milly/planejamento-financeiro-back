@@ -1,6 +1,11 @@
 import { Card } from './Card';
-import { diaMes, ESTILO_TIPO, moeda } from '../lib/formato';
+import { diaMes, ESTILO_FORMA_PAGAMENTO, ESTILO_TIPO, moeda } from '../lib/formato';
 import type { Conta, Lancamento } from '../types/api';
+
+/** `forma_pagamento` nulo é tratado como débito em todo lugar (ADR-0001). */
+function formaPagamento(lanc: Lancamento) {
+  return ESTILO_FORMA_PAGAMENTO[lanc.forma_pagamento ?? 'debito'];
+}
 
 interface Props {
   titulo: string;
@@ -62,6 +67,14 @@ export function TabelaLancamentos({
                       >
                         {estilo.rotulo}
                       </span>
+                      {lanc.tipo === 'saida' && (
+                        <span
+                          className="mt-1 block text-[10px] text-roxo-400 dark:text-roxo-200"
+                          title={formaPagamento(lanc).rotulo}
+                        >
+                          {formaPagamento(lanc).icone} {formaPagamento(lanc).rotulo}
+                        </span>
+                      )}
                     </div>
                   </div>
                   {!somenteLeitura && (
@@ -86,6 +99,7 @@ export function TabelaLancamentos({
                   <th className="pb-2 font-medium">Tipo</th>
                   <th className="pb-2 font-medium">Conta</th>
                   <th className="pb-2 font-medium">Categoria</th>
+                  <th className="pb-2 font-medium">Pagamento</th>
                   <th className="pb-2 font-medium">Descrição</th>
                   <th className="pb-2 text-right font-medium">Valor</th>
                   {!somenteLeitura && <th className="pb-2" />}
@@ -121,6 +135,15 @@ export function TabelaLancamentos({
                       </td>
                       <td className="py-2 text-roxo-500 dark:text-roxo-200">
                         {lanc.categoria?.nome ?? '—'}
+                      </td>
+                      <td className="py-2 text-roxo-500 dark:text-roxo-200">
+                        {lanc.tipo === 'saida' ? (
+                          <span title={formaPagamento(lanc).rotulo}>
+                            {formaPagamento(lanc).icone}
+                          </span>
+                        ) : (
+                          '—'
+                        )}
                       </td>
                       <td className="max-w-xs truncate py-2 text-roxo-500 dark:text-roxo-200">
                         {lanc.descricao || '—'}

@@ -152,6 +152,15 @@ O risco é os dois arquivos divergirem — por isso ambos têm um comentário no
 topo apontando um para o outro. Se o número de endpoints crescer muito, vale
 migrar para geração automática (`openapi-typescript`).
 
+### Forma de pagamento, cartões de crédito e fatura
+
+Um cartão de crédito é modelado como uma `Conta` de tipo `cartao_credito`, não
+como uma entidade nova — reaproveita o CRUD, a exclusão que desativa em vez de
+apagar, e o mecanismo de `TRANSFERENCIA` já existente para representar o
+pagamento da fatura. O detalhe completo está nos ADRs 0001–0003, em
+`docs/adr/`, e na spec em `docs/specs/pagamentos-e-cartoes.md`; o plano de
+implementação por fases está em `docs/PLANO-IMPLEMENTACAO.md`.
+
 ### Como funciona a autenticação
 
 Senha com **bcrypt**, sessão com **JWT**.

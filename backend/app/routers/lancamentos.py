@@ -13,6 +13,7 @@ from app.schemas import (
     LancamentoCriar,
     LancamentoOut,
     validar_coerencia,
+    validar_conta_compativel,
 )
 
 router = APIRouter(prefix="/anos/{ano}/lancamentos", tags=["lançamentos"])
@@ -60,8 +61,9 @@ def criar(
 ) -> Lancamento:
     _validar_data_no_ano(dados.data.year, ano_ref)
     _validar_categoria(dados.categoria_id, db)
-    _validar_conta(dados.conta_id, db)
+    conta = _validar_conta(dados.conta_id, db)
     _validar_conta(dados.conta_destino_id, db)
+    _validar_conta_compativel(dados.tipo, dados.forma_pagamento, conta)
 
     lanc = Lancamento(
         ano_id=ano_ref.id,
@@ -95,12 +97,12 @@ def atualizar(
         lanc.mes = lanc.data.month
     if "categoria_id" in alteracoes:
         _validar_categoria(lanc.categoria_id, db)
-    if "conta_id" in alteracoes:
-        _validar_conta(lanc.conta_id, db)
     if "conta_destino_id" in alteracoes:
         _validar_conta(lanc.conta_destino_id, db)
 
     _validar_coerencia(lanc)
+    conta = _validar_conta(lanc.conta_id, db)
+    _validar_conta_compativel(lanc.tipo, lanc.forma_pagamento, conta)
 
     db.commit()
     db.refresh(lanc)
@@ -156,14 +158,30 @@ def _validar_categoria(categoria_id: int | None, db: Session) -> None:
         )
 
 
-def _validar_conta(conta_id: int | None, db: Session) -> None:
+def _validar_conta(conta_id: int | None, db: Session) -> Conta | None:
     if conta_id is None:
-        return
-    if db.get(Conta, conta_id) is None:
+        return None
+    conta = db.get(Conta, conta_id)
+    if conta is None:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=f"Conta {conta_id} não existe.",
         )
+    return conta
+
+
+def _validar_conta_compativel(
+    tipo: TipoLancamento, forma_pagamento, conta: Conta | None
+) -> None:
+    if conta is None:
+        return
+
+    def erro(mensagem: str) -> HTTPException:
+        return HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=mensagem
+        )
+
+    validar_conta_compativel(tipo, forma_pagamento, conta.tipo, erro)
 
 
 def _validar_coerencia(lanc: Lancamento) -> None:
@@ -185,5 +203,6 @@ def _validar_coerencia(lanc: Lancamento) -> None:
         lanc.categoria_id,
         lanc.conta_id,
         lanc.conta_destino_id,
+        lanc.forma_pagamento,
         erro,
     )

@@ -13,13 +13,20 @@ from app.deps import obter_ano, obter_ano_editavel
 from app.models import (
     Ano,
     Conta,
+    FormaPagamento,
     GastoFixo,
     GastoFixoMensal,
     Lancamento,
     SituacaoGastoFixo,
     TipoLancamento,
 )
-from app.schemas import GastoFixoAtualizar, GastoFixoCriar, GastoFixoOut, LancamentoOut
+from app.schemas import (
+    GastoFixoAtualizar,
+    GastoFixoCriar,
+    GastoFixoOut,
+    LancamentoOut,
+    validar_conta_compativel,
+)
 
 router = APIRouter(prefix="/anos/{ano}/gastos-fixos", tags=["gastos fixos"])
 
@@ -48,7 +55,8 @@ def criar(
     ano_ref: Ano = Depends(obter_ano_editavel),
     db: Session = Depends(get_db),
 ) -> GastoFixo:
-    _validar_conta(dados.conta_id, db)
+    conta = _validar_conta(dados.conta_id, db)
+    _validar_conta_compativel(dados.forma_pagamento, conta)
     gasto = GastoFixo(ano_id=ano_ref.id, **dados.model_dump())
     db.add(gasto)
     db.commit()
@@ -69,6 +77,10 @@ def atualizar(
         _validar_conta(alteracoes["conta_id"], db)
     for campo, valor in alteracoes.items():
         setattr(gasto, campo, valor)
+
+    conta = _validar_conta(gasto.conta_id, db)
+    _validar_conta_compativel(gasto.forma_pagamento, conta)
+
     db.commit()
     db.refresh(gasto)
     return gasto
@@ -128,6 +140,7 @@ def pagar(
         valor=gasto.valor,
         tipo=TipoLancamento.SAIDA,
         categoria_id=gasto.categoria_id,
+        forma_pagamento=gasto.forma_pagamento,
         descricao=gasto.descricao,
     )
     db.add(lancamento)
@@ -173,12 +186,28 @@ def desfazer(
     db.commit()
 
 
-def _validar_conta(conta_id: int, db: Session) -> None:
-    if db.get(Conta, conta_id) is None:
+def _validar_conta(conta_id: int, db: Session) -> Conta:
+    conta = db.get(Conta, conta_id)
+    if conta is None:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=f"Conta {conta_id} não existe.",
         )
+    return conta
+
+
+def _validar_conta_compativel(
+    forma_pagamento: FormaPagamento | None, conta: Conta
+) -> None:
+    """Mesma regra do lançamento manual: crédito exige cartão, o resto exige
+    conta corrente — um gasto fixo vira uma saída de verdade quando pago."""
+
+    def erro(mensagem: str) -> HTTPException:
+        return HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=mensagem
+        )
+
+    validar_conta_compativel(TipoLancamento.SAIDA, forma_pagamento, conta.tipo, erro)
 
 
 def _obter(gasto_id: int, ano_ref: Ano, db: Session) -> GastoFixo:

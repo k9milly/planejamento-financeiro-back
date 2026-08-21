@@ -31,6 +31,7 @@ from app.models import (
     Ano,
     Categoria,
     Conta,
+    FaturaMensal,
     GastoFixo,
     GastoFixoMensal,
     ItemWishlist,
@@ -52,6 +53,7 @@ ORDEM = [
     GastoFixo,
     Lancamento,
     GastoFixoMensal,
+    FaturaMensal,
     ItemWishlist,
 ]
 
