@@ -1,7 +1,7 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { Card } from './Card';
-import { moeda } from '../lib/formato';
-import type { Categoria, Conta, GastoFixo } from '../types/api';
+import { ESTILO_FORMA_PAGAMENTO, moeda } from '../lib/formato';
+import type { Categoria, Conta, FormaPagamento, GastoFixo } from '../types/api';
 
 interface Props {
   gastos: GastoFixo[];
@@ -15,10 +15,13 @@ interface Props {
     dia_vencimento: number;
     conta_id: number;
     categoria_id?: number | null;
+    forma_pagamento?: FormaPagamento | null;
   }) => Promise<void>;
   aoAlternar: (gasto: GastoFixo, pago: boolean) => Promise<void>;
   aoExcluir: (id: number) => Promise<void>;
 }
+
+const FORMAS_PAGAMENTO = Object.keys(ESTILO_FORMA_PAGAMENTO) as FormaPagamento[];
 
 /**
  * Container de gastos fixos do mês selecionado.
@@ -42,12 +45,20 @@ export function GastosFixos({
   const [dia, setDia] = useState('1');
   const [categoriaId, setCategoriaId] = useState('');
   const [contaId, setContaId] = useState('');
+  const [formaPagamento, setFormaPagamento] = useState<FormaPagamento>('debito');
   const [erro, setErro] = useState('');
 
-  // Seleciona a primeira conta assim que a lista chega.
+  const ehCredito = formaPagamento === 'credito';
+  const contasCompativeis = contas.filter((c) =>
+    ehCredito ? c.tipo === 'cartao_credito' : c.tipo === 'corrente',
+  );
+
+  // Seleciona a primeira conta compatível assim que a lista chega, e troca de
+  // novo se deixar de ser compatível (ex.: mudou pra crédito).
   useEffect(() => {
-    if (!contaId && contas.length) setContaId(String(contas[0].id));
-  }, [contas, contaId]);
+    if (contasCompativeis.some((c) => String(c.id) === contaId)) return;
+    setContaId(contasCompativeis.length ? String(contasCompativeis[0].id) : '');
+  }, [contasCompativeis, contaId]);
 
   const ativos = gastos.filter((g) => g.ativo);
   const estaPago = (gasto: GastoFixo) =>
@@ -68,6 +79,7 @@ export function GastosFixos({
         dia_vencimento: Number(dia),
         conta_id: Number(contaId),
         categoria_id: categoriaId ? Number(categoriaId) : null,
+        forma_pagamento: formaPagamento,
       });
       setDescricao('');
       setValor('');
@@ -125,13 +137,25 @@ export function GastosFixos({
               required
             />
             <select
+              value={formaPagamento}
+              onChange={(e) => setFormaPagamento(e.target.value as FormaPagamento)}
+              className={`${campo} flex-1`}
+              aria-label="Forma de pagamento"
+            >
+              {FORMAS_PAGAMENTO.map((f) => (
+                <option key={f} value={f}>
+                  {ESTILO_FORMA_PAGAMENTO[f].icone} {ESTILO_FORMA_PAGAMENTO[f].rotulo}
+                </option>
+              ))}
+            </select>
+            <select
               value={contaId}
               onChange={(e) => setContaId(e.target.value)}
               className={`${campo} flex-1`}
               aria-label="Conta"
               required
             >
-              {contas.map((c) => (
+              {contasCompativeis.map((c) => (
                 <option key={c.id} value={c.id}>
                   {c.nome}
                 </option>

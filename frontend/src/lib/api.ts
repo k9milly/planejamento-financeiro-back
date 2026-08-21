@@ -5,6 +5,8 @@ import type {
   Categoria,
   Conta,
   Desejo,
+  Fatura,
+  FormaPagamento,
   GastoFixo,
   Importancia,
   SaldoInicial,
@@ -14,6 +16,7 @@ import type {
   Regra,
   ResultadoImportacao,
   ResumoAno,
+  TipoConta,
   TotalWishlist,
   TransacaoConfirmar,
 } from '../types/api';
@@ -114,12 +117,37 @@ export const api = {
 
   resumo: (ano: number) => requisitar<ResumoAno>(`/anos/${ano}/resumo`),
 
-  listarContas: () => requisitar<Conta[]>('/contas'),
+  listarContas: (tipo?: TipoConta) =>
+    requisitar<Conta[]>(`/contas${tipo ? `?tipo=${tipo}` : ''}`),
 
-  criarConta: (nome: string, cor?: string, ordem?: number) =>
+  criarConta: (dados: {
+    nome: string;
+    cor?: string;
+    ordem?: number;
+    tipo?: TipoConta;
+    dia_vencimento_fatura?: number | null;
+    conta_pagamento_padrao_id?: number | null;
+  }) =>
     requisitar<Conta>('/contas', {
       method: 'POST',
-      body: JSON.stringify({ nome, ...(cor ? { cor } : {}), ordem: ordem ?? 0 }),
+      body: JSON.stringify({ ordem: 0, ...dados }),
+    }),
+
+  atualizarConta: (
+    id: number,
+    dados: Partial<{
+      nome: string;
+      cor: string;
+      ordem: number;
+      ativa: boolean;
+      tipo: TipoConta;
+      dia_vencimento_fatura: number | null;
+      conta_pagamento_padrao_id: number | null;
+    }>,
+  ) =>
+    requisitar<Conta>(`/contas/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(dados),
     }),
 
   excluirConta: (id: number) =>
@@ -177,10 +205,29 @@ export const api = {
       dia_vencimento: number;
       conta_id: number;
       categoria_id?: number | null;
+      forma_pagamento?: FormaPagamento | null;
     },
   ) =>
     requisitar<GastoFixo>(`/anos/${ano}/gastos-fixos`, {
       method: 'POST',
+      body: JSON.stringify(dados),
+    }),
+
+  atualizarGastoFixo: (
+    ano: number,
+    id: number,
+    dados: Partial<{
+      descricao: string;
+      valor: string;
+      dia_vencimento: number;
+      conta_id: number;
+      categoria_id: number | null;
+      forma_pagamento: FormaPagamento | null;
+      ativo: boolean;
+    }>,
+  ) =>
+    requisitar<GastoFixo>(`/anos/${ano}/gastos-fixos/${id}`, {
+      method: 'PATCH',
       body: JSON.stringify(dados),
     }),
 
@@ -250,5 +297,26 @@ export const api = {
     requisitar<ResultadoImportacao>(`/anos/${ano}/importacao/ofx/confirmar`, {
       method: 'POST',
       body: JSON.stringify({ transacoes }),
+    }),
+
+  fatura: (ano: number, cartaoId: number, mes: number) =>
+    requisitar<Fatura>(`/anos/${ano}/cartoes/${cartaoId}/fatura/${mes}`),
+
+  pagarFatura: (
+    ano: number,
+    cartaoId: number,
+    mes: number,
+    contaPagamentoId?: number | null,
+  ) =>
+    requisitar<Lancamento>(`/anos/${ano}/cartoes/${cartaoId}/fatura/${mes}/pagar`, {
+      method: 'POST',
+      ...(contaPagamentoId
+        ? { body: JSON.stringify({ conta_pagamento_id: contaPagamentoId }) }
+        : {}),
+    }),
+
+  desfazerFatura: (ano: number, cartaoId: number, mes: number) =>
+    requisitar<void>(`/anos/${ano}/cartoes/${cartaoId}/fatura/${mes}/desfazer`, {
+      method: 'POST',
     }),
 };

@@ -78,6 +78,31 @@ class SituacaoGastoFixo(str, enum.Enum):
     PAGO = "pago"
 
 
+class TipoConta(str, enum.Enum):
+    """Distingue dinheiro de verdade de dívida de cartão.
+
+    Uma conta corrente é onde o dinheiro está disponível. Um cartão de crédito
+    é modelado como uma `Conta` também (ver ADR-0002 em `docs/adr/`), mas o
+    "saldo" dele é sempre <= 0: é a fatura em aberto, não dinheiro disponível.
+    """
+
+    CORRENTE = "corrente"
+    CARTAO_CREDITO = "cartao_credito"
+
+
+class FormaPagamento(str, enum.Enum):
+    """Como uma saída foi paga. Só se aplica a `TipoLancamento.SAIDA`.
+
+    `None` no campo do lançamento é tratado como equivalente a `DEBITO` em
+    todo lugar que olha o campo — ver ADR-0001.
+    """
+
+    CREDITO = "credito"
+    DEBITO = "debito"
+    PIX = "pix"
+    DINHEIRO = "dinheiro"
+
+
 class Importancia(str, enum.Enum):
     BAIXA = "baixa"
     MEDIA = "media"
@@ -149,6 +174,12 @@ class Conta(Base):
     """
 
     __tablename__ = "contas"
+    __table_args__ = (
+        CheckConstraint(
+            "dia_vencimento_fatura IS NULL OR dia_vencimento_fatura BETWEEN 1 AND 31",
+            name="ck_conta_dia_vencimento_fatura",
+        ),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     nome: Mapped[str] = mapped_column(String(60), unique=True, nullable=False)
@@ -157,8 +188,20 @@ class Conta(Base):
     ordem: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     ativa: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
 
+    tipo: Mapped[TipoConta] = mapped_column(
+        Enum(TipoConta, native_enum=False), nullable=False, default=TipoConta.CORRENTE
+    )
+    # Só relevante para tipo=cartao_credito, abaixo.
+    dia_vencimento_fatura: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    conta_pagamento_padrao_id: Mapped[int | None] = mapped_column(
+        ForeignKey("contas.id", ondelete="SET NULL"), nullable=True
+    )
+
     saldos: Mapped[list["SaldoInicial"]] = relationship(
         back_populates="conta", cascade="all, delete-orphan"
+    )
+    conta_pagamento_padrao: Mapped["Conta | None"] = relationship(
+        remote_side=[id], foreign_keys=[conta_pagamento_padrao_id]
     )
 
 
@@ -237,6 +280,12 @@ class Lancamento(Base):
         Enum(DestinoRendimento, native_enum=False), nullable=True
     )
 
+    # Só faz sentido para saídas. Nulo é tratado como débito (ver ADR-0001) —
+    # lançamentos antigos, sem o campo, continuam se comportando como sempre.
+    forma_pagamento: Mapped[FormaPagamento | None] = mapped_column(
+        Enum(FormaPagamento, native_enum=False), nullable=True
+    )
+
     # Só faz sentido para saídas; os demais tipos não entram no gráfico por categoria.
     categoria_id: Mapped[int | None] = mapped_column(
         ForeignKey("categorias.id", ondelete="SET NULL"), nullable=True, index=True
@@ -279,7 +328,15 @@ class GastoFixo(Base):
     descricao: Mapped[str] = mapped_column(String(120), nullable=False)
     valor: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False)
     dia_vencimento: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
-    forma_pagamento: Mapped[str] = mapped_column(String(60), nullable=False, default="")
+    # Texto livre digitado antes do enum existir (ex.: "boleto", "débito
+    # automático"). Mantido só para exibição do que já estava escrito — nenhuma
+    # regra nova lê este campo. Ver spec "Forma de pagamento".
+    forma_pagamento_legado: Mapped[str] = mapped_column(
+        String(60), nullable=False, default=""
+    )
+    forma_pagamento: Mapped[FormaPagamento | None] = mapped_column(
+        Enum(FormaPagamento, native_enum=False), nullable=True
+    )
     categoria_id: Mapped[int | None] = mapped_column(
         ForeignKey("categorias.id", ondelete="SET NULL"), nullable=True
     )
@@ -347,6 +404,41 @@ class RegraCategorizacao(Base):
     )
 
     categoria: Mapped["Categoria"] = relationship()
+
+
+class FaturaMensal(Base):
+    """Situação da fatura de um cartão em um mês específico (pago/pendente).
+
+    Molde de `GastoFixoMensal`, mas precisa de `ano_id` próprio — diferente de
+    um gasto fixo, o cartão (como a conta) é global e existe em todos os anos,
+    então não há um `ano_id` para pegar emprestado.
+    """
+
+    __tablename__ = "faturas_mensais"
+    __table_args__ = (
+        UniqueConstraint(
+            "cartao_id", "ano_id", "mes", name="uq_fatura_cartao_ano_mes"
+        ),
+        CheckConstraint("mes BETWEEN 1 AND 12", name="ck_fatura_mes"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    cartao_id: Mapped[int] = mapped_column(
+        ForeignKey("contas.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    ano_id: Mapped[int] = mapped_column(
+        ForeignKey("anos.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    mes: Mapped[int] = mapped_column(Integer, nullable=False)
+    situacao: Mapped[SituacaoGastoFixo] = mapped_column(
+        Enum(SituacaoGastoFixo, native_enum=False),
+        nullable=False,
+        default=SituacaoGastoFixo.PENDENTE,
+    )
+    # Preenchido quando a fatura vira uma transferência de verdade.
+    lancamento_id: Mapped[int | None] = mapped_column(
+        ForeignKey("lancamentos.id", ondelete="SET NULL"), nullable=True
+    )
 
 
 class ItemWishlist(Base):

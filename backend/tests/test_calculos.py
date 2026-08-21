@@ -11,11 +11,12 @@ from decimal import Decimal
 
 import pytest
 
-from app.models import DestinoRendimento, TipoLancamento
+from app.models import DestinoRendimento, TipoConta, TipoLancamento
 from app.services.calculos import Carteiras, calcular_ano, calcular_totais_mes
 
 NUBANK = 1
 MERCADO_PAGO = 2
+CARTAO = 3
 
 
 @dataclass
@@ -252,6 +253,59 @@ class TestVariasContas:
         assert t.por_conta[NUBANK].guardado == D("980.00")
         assert t.por_conta[MERCADO_PAGO].guardado == D("5050.00")
         assert t.guardado_acumulado == D("6030.00")
+
+
+class TestSaldoInteligente:
+    """Compra no crédito não pode descontar do saldo disponível (ADR-0002)."""
+
+    TIPOS = {NUBANK: TipoConta.CORRENTE, CARTAO: TipoConta.CARTAO_CREDITO}
+
+    def test_credito_nao_desconta_saldo_da_conta(self):
+        t = calcular_totais_mes(
+            1,
+            [_l(1, 100, TipoLancamento.SAIDA, conta=CARTAO, categoria="Mercado")],
+            _abertura(**{"1": ("500", "0")}),
+            self.TIPOS,
+        )
+        assert t.saldo == D("500.00")
+        assert t.por_cartao[CARTAO].saldo == D("-100.00")
+        # A saída ainda entra nos totais do mês e no relatório por categoria —
+        # só não sai do dinheiro disponível ainda.
+        assert t.saidas == D("100.00")
+        assert t.gastos_por_categoria == {"Mercado": D("100.00")}
+
+    def test_debito_continua_descontando_normalmente(self):
+        t = calcular_totais_mes(
+            1,
+            [_l(1, 100, TipoLancamento.SAIDA, conta=NUBANK, categoria="Mercado")],
+            _abertura(**{"1": ("500", "0")}),
+            self.TIPOS,
+        )
+        assert t.saldo == D("400.00")
+
+    def test_pagar_fatura_e_uma_transferencia_da_conta_para_o_cartao(self):
+        t = calcular_totais_mes(
+            1,
+            [
+                _l(1, 100, TipoLancamento.SAIDA, conta=CARTAO),
+                _l(1, 100, TipoLancamento.TRANSFERENCIA,
+                   conta=NUBANK, destino_conta=CARTAO),
+            ],
+            _abertura(**{"1": ("500", "0")}),
+            self.TIPOS,
+        )
+        assert t.saldo == D("400.00")  # dinheiro de verdade saiu da conta
+        assert t.por_cartao[CARTAO].saldo == ZERO_DECIMAL  # dívida quitada
+
+    def test_divida_do_cartao_encadeia_entre_meses(self):
+        meses = calcular_ano(
+            [_l(1, 300, TipoLancamento.SAIDA, conta=CARTAO)],
+            _abertura(**{"1": ("1000", "0")}),
+            self.TIPOS,
+        )
+        assert meses[0].por_cartao[CARTAO].saldo == D("-300.00")
+        assert meses[1].por_cartao[CARTAO].saldo == D("-300.00")
+        assert meses[11].saldo == D("1000.00")
 
 
 class TestCalcularAno:

@@ -20,6 +20,7 @@ from app.deps import obter_ano_editavel
 from app.models import (
     Ano,
     Categoria,
+    Conta,
     Lancamento,
     RegraCategorizacao,
     TipoLancamento,
@@ -30,6 +31,7 @@ from app.schemas import (
     ResultadoImportacao,
     TransacaoPrevia,
     validar_coerencia,
+    validar_conta_compativel,
 )
 from app.services.ofx import ErroOFX, ler_ofx
 
@@ -188,6 +190,7 @@ def confirmar(
             )
 
         _validar_coerencia(item)
+        _validar_conta_compativel(item, db)
 
         db.add(
             Lancamento(
@@ -200,6 +203,7 @@ def confirmar(
                 tipo=item.tipo,
                 destino=item.destino,
                 categoria_id=item.categoria_id,
+                forma_pagamento=item.forma_pagamento,
                 descricao=item.descricao,
                 fitid=item.fitid,
             )
@@ -233,8 +237,21 @@ def _validar_coerencia(item) -> None:
         item.categoria_id,
         item.conta_id,
         item.conta_destino_id,
+        item.forma_pagamento,
         erro,
     )
+
+
+def _validar_conta_compativel(item, db: Session) -> None:
+    def erro(mensagem: str) -> HTTPException:
+        return HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=mensagem
+        )
+
+    conta = db.get(Conta, item.conta_id)
+    if conta is None:
+        raise erro(f"Conta {item.conta_id} não existe.")
+    validar_conta_compativel(item.tipo, item.forma_pagamento, conta.tipo, erro)
 
 
 def _criar_regra(db: Session, padrao: str, categoria_id: int) -> bool:

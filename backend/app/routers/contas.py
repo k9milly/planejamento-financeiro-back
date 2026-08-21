@@ -9,19 +9,23 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models import Conta, GastoFixo, Lancamento
-from app.schemas import ContaAtualizar, ContaCriar, ContaOut
+from app.models import Conta, FaturaMensal, GastoFixo, Lancamento, TipoConta
+from app.schemas import ContaAtualizar, ContaCriar, ContaOut, _validar_coerencia_conta
 
 router = APIRouter(prefix="/contas", tags=["contas"])
 
 
 @router.get("", response_model=list[ContaOut], summary="Lista as contas")
 def listar(
-    incluir_inativas: bool = False, db: Session = Depends(get_db)
+    incluir_inativas: bool = False,
+    tipo: TipoConta | None = None,
+    db: Session = Depends(get_db),
 ) -> list[Conta]:
     consulta = db.query(Conta)
     if not incluir_inativas:
         consulta = consulta.filter(Conta.ativa.is_(True))
+    if tipo is not None:
+        consulta = consulta.filter(Conta.tipo == tipo)
     return consulta.order_by(Conta.ordem, Conta.nome).all()
 
 
@@ -49,6 +53,16 @@ def atualizar(
     conta = _obter(conta_id, db)
     for campo, valor in dados.model_dump(exclude_unset=True).items():
         setattr(conta, campo, valor)
+
+    def erro(mensagem: str) -> HTTPException:
+        return HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=mensagem
+        )
+
+    _validar_coerencia_conta(
+        conta.tipo, conta.dia_vencimento_fatura, conta.conta_pagamento_padrao_id, erro
+    )
+
     db.commit()
     db.refresh(conta)
     return conta
@@ -76,6 +90,7 @@ def excluir(conta_id: int, db: Session = Depends(get_db)) -> None:
         )
         .count()
         or db.query(GastoFixo).filter(GastoFixo.conta_id == conta_id).count()
+        or db.query(FaturaMensal).filter(FaturaMensal.cartao_id == conta_id).count()
     )
 
     if em_uso:

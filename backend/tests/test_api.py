@@ -347,6 +347,212 @@ class TestGastosFixos:
         assert cliente.get("/anos/2026/lancamentos?mes=4").json() == []
 
 
+@pytest.fixture()
+def cartao(cliente):
+    """Cartão de crédito, pago por padrão pela conta `conta`."""
+    resposta = cliente.post(
+        "/contas",
+        json={
+            "nome": "Cartão Nubank",
+            "tipo": "cartao_credito",
+            "dia_vencimento_fatura": 10,
+        },
+    )
+    assert resposta.status_code == 201, resposta.text
+    return resposta.json()
+
+
+class TestCartoes:
+    def test_criar_cartao_sem_dia_vencimento_e_rejeitado(self, cliente):
+        resposta = cliente.post(
+            "/contas", json={"nome": "Cartão sem dia", "tipo": "cartao_credito"}
+        )
+        assert resposta.status_code == 422
+
+    def test_conta_corrente_nao_aceita_dia_vencimento(self, cliente):
+        resposta = cliente.post(
+            "/contas", json={"nome": "Conta X", "dia_vencimento_fatura": 10}
+        )
+        assert resposta.status_code == 422
+
+    def test_criar_conta_comum_continua_funcionando(self, cliente):
+        resposta = cliente.post("/contas", json={"nome": "Nubank"})
+        assert resposta.status_code == 201
+        assert resposta.json()["tipo"] == "corrente"
+
+    def test_filtro_por_tipo(self, cliente, conta, cartao):
+        correntes = cliente.get("/contas?tipo=corrente").json()
+        cartoes = cliente.get("/contas?tipo=cartao_credito").json()
+        assert [c["id"] for c in correntes] == [conta["id"]]
+        assert [c["id"] for c in cartoes] == [cartao["id"]]
+
+    def test_editar_dia_vencimento_de_cartao_existente(self, cliente, cartao):
+        resposta = cliente.patch(
+            f"/contas/{cartao['id']}", json={"dia_vencimento_fatura": 15}
+        )
+        assert resposta.status_code == 200
+        assert resposta.json()["dia_vencimento_fatura"] == 15
+
+    def test_editar_conta_corrente_para_ter_dia_vencimento_e_rejeitado(
+        self, cliente, conta
+    ):
+        resposta = cliente.patch(
+            f"/contas/{conta['id']}", json={"dia_vencimento_fatura": 10}
+        )
+        assert resposta.status_code == 422
+
+
+class TestFormaPagamento:
+    def test_credito_exige_conta_do_tipo_cartao(self, cliente, ano, conta):
+        resposta = cliente.post(
+            "/anos/2026/lancamentos",
+            json=_lanc(conta, tipo="saida", valor="50", forma_pagamento="credito"),
+        )
+        assert resposta.status_code == 422
+
+    def test_credito_em_cartao_e_aceito(self, cliente, ano, cartao):
+        resposta = cliente.post(
+            "/anos/2026/lancamentos",
+            json=_lanc(cartao, tipo="saida", valor="50", forma_pagamento="credito"),
+        )
+        assert resposta.status_code == 201
+
+    def test_debito_em_cartao_e_rejeitado(self, cliente, ano, cartao):
+        resposta = cliente.post(
+            "/anos/2026/lancamentos",
+            json=_lanc(cartao, tipo="saida", valor="50", forma_pagamento="debito"),
+        )
+        assert resposta.status_code == 422
+
+    def test_forma_pagamento_so_em_saida(self, cliente, ano, conta):
+        resposta = cliente.post(
+            "/anos/2026/lancamentos",
+            json=_lanc(conta, tipo="entrada", forma_pagamento="pix"),
+        )
+        assert resposta.status_code == 422
+
+    def test_compra_no_credito_nao_desconta_saldo_disponivel(
+        self, cliente, ano, conta, cartao
+    ):
+        cliente.post(
+            "/anos/2026/lancamentos",
+            json=_lanc(
+                cartao, tipo="saida", valor="100", forma_pagamento="credito"
+            ),
+        )
+        abril = cliente.get("/anos/2026/resumo").json()["meses"][3]
+        saldos = {c["nome"]: c["saldo"] for c in abril["por_conta"]}
+        assert saldos[conta["nome"]] == "0.97"  # inalterado
+        cartoes = {c["nome"]: c["saldo"] for c in abril["por_cartao"]}
+        assert cartoes[cartao["nome"]] == "-100.00"
+
+    def test_editar_para_credito_sem_trocar_conta_e_rejeitado(
+        self, cliente, ano, conta
+    ):
+        lanc = cliente.post(
+            "/anos/2026/lancamentos", json=_lanc(conta, tipo="saida", valor="50")
+        ).json()
+        resposta = cliente.patch(
+            f"/anos/2026/lancamentos/{lanc['id']}", json={"forma_pagamento": "credito"}
+        )
+        assert resposta.status_code == 422
+
+
+class TestFaturas:
+    def test_pagar_gera_transferencia_e_zera_a_divida(
+        self, cliente, ano, conta, cartao
+    ):
+        cliente.post(
+            "/anos/2026/lancamentos",
+            json=_lanc(
+                cartao, tipo="saida", valor="300", forma_pagamento="credito"
+            ),
+        )
+        resposta = cliente.post(
+            f"/anos/2026/cartoes/{cartao['id']}/fatura/4/pagar",
+            json={"conta_pagamento_id": conta["id"]},
+        )
+        assert resposta.status_code == 201
+        assert resposta.json()["tipo"] == "transferencia"
+        assert resposta.json()["valor"] == "300.00"
+
+        abril = cliente.get("/anos/2026/resumo").json()["meses"][3]
+        cartoes = {c["nome"]: c["saldo"] for c in abril["por_cartao"]}
+        assert cartoes[cartao["nome"]] == "0.00"
+
+    def test_pagar_duas_vezes_nao_duplica(self, cliente, ano, conta, cartao):
+        cliente.post(
+            "/anos/2026/lancamentos",
+            json=_lanc(cartao, tipo="saida", valor="100", forma_pagamento="credito"),
+        )
+        primeiro = cliente.post(
+            f"/anos/2026/cartoes/{cartao['id']}/fatura/4/pagar",
+            json={"conta_pagamento_id": conta["id"]},
+        )
+        segundo = cliente.post(
+            f"/anos/2026/cartoes/{cartao['id']}/fatura/4/pagar",
+            json={"conta_pagamento_id": conta["id"]},
+        )
+        assert segundo.json()["id"] == primeiro.json()["id"]
+        assert len(cliente.get("/anos/2026/lancamentos?mes=4").json()) == 2  # compra + pagamento
+
+    def test_usa_conta_pagamento_padrao_quando_nao_informada(
+        self, cliente, ano, conta
+    ):
+        cartao = cliente.post(
+            "/contas",
+            json={
+                "nome": "Cartão com padrão",
+                "tipo": "cartao_credito",
+                "dia_vencimento_fatura": 10,
+                "conta_pagamento_padrao_id": conta["id"],
+            },
+        ).json()
+        cliente.post(
+            "/anos/2026/lancamentos",
+            json=_lanc(cartao, tipo="saida", valor="80", forma_pagamento="credito"),
+        )
+        resposta = cliente.post(f"/anos/2026/cartoes/{cartao['id']}/fatura/4/pagar")
+        assert resposta.status_code == 201
+        assert resposta.json()["conta_id"] == conta["id"]
+
+    def test_sem_conta_padrao_e_sem_conta_informada_e_rejeitado(
+        self, cliente, ano, cartao
+    ):
+        cliente.post(
+            "/anos/2026/lancamentos",
+            json=_lanc(cartao, tipo="saida", valor="80", forma_pagamento="credito"),
+        )
+        resposta = cliente.post(f"/anos/2026/cartoes/{cartao['id']}/fatura/4/pagar")
+        assert resposta.status_code == 422
+
+    def test_desfazer_remove_o_lancamento_e_volta_a_pendente(
+        self, cliente, ano, conta, cartao
+    ):
+        cliente.post(
+            "/anos/2026/lancamentos",
+            json=_lanc(cartao, tipo="saida", valor="80", forma_pagamento="credito"),
+        )
+        cliente.post(
+            f"/anos/2026/cartoes/{cartao['id']}/fatura/4/pagar",
+            json={"conta_pagamento_id": conta["id"]},
+        )
+        assert cliente.post(
+            f"/anos/2026/cartoes/{cartao['id']}/fatura/4/desfazer"
+        ).status_code == 204
+
+        estado = cliente.get(f"/anos/2026/cartoes/{cartao['id']}/fatura/4").json()
+        assert estado["situacao"] == "pendente"
+        assert estado["valor_em_aberto"] == "80.00"
+
+    def test_pagar_sem_fatura_em_aberto_e_rejeitado(self, cliente, ano, conta, cartao):
+        resposta = cliente.post(
+            f"/anos/2026/cartoes/{cartao['id']}/fatura/4/pagar",
+            json={"conta_pagamento_id": conta["id"]},
+        )
+        assert resposta.status_code == 422
+
+
 class TestWishlist:
     def test_total_soma_apenas_os_marcados(self, cliente, ano):
         cliente.post(
