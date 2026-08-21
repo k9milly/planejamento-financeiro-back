@@ -89,16 +89,47 @@ Para rendimentos, `destino` é obrigatório:
 { "data": "2026-06-16", "valor": "47.75", "tipo": "rendimento", "destino": "guardado" }
 ```
 
-Para saídas, `categoria_id` é opcional:
+Para saídas, `categoria_id` e `forma_pagamento` são opcionais:
 ```json
-{ "data": "2026-06-09", "valor": "8.50", "tipo": "saida", "categoria_id": 1, "descricao": "brownie" }
+{ "data": "2026-06-09", "valor": "8.50", "tipo": "saida", "categoria_id": 1, "forma_pagamento": "pix", "descricao": "brownie" }
 ```
+
+`forma_pagamento` (`credito | debito | pix | dinheiro`) só é aceito em saídas.
+`credito` exige que `conta_id` seja um cartão; as demais formas (e a ausência
+do campo) exigem uma conta corrente — ver
+[REGRAS.md](REGRAS.md#forma-de-pagamento).
 
 ### `PATCH /anos/{ano}/lancamentos/{id}`
 Atualização parcial. Só os campos enviados mudam.
 
 ### `DELETE /anos/{ano}/lancamentos/{id}`
 Retorna 204.
+
+## Contas e cartões de crédito
+
+Um cartão de crédito é uma `Conta` com `tipo=cartao_credito` (ver
+[ARQUITETURA.md](ARQUITETURA.md#forma-de-pagamento-cartões-de-crédito-e-fatura)).
+
+| Método | Rota | Descrição |
+| --- | --- | --- |
+| `GET` | `/contas` | Lista as ativas; `?tipo=corrente\|cartao_credito` filtra; `?incluir_inativas=true` traz todas |
+| `POST` | `/contas` | `{ "nome": "Nubank" }` ou `{ "nome": "Cartão X", "tipo": "cartao_credito", "dia_vencimento_fatura": 10 }` |
+| `PATCH` | `/contas/{id}` | Atualização parcial |
+| `DELETE` | `/contas/{id}` | Desativa se em uso (lançamento, gasto fixo ou fatura); remove se não |
+
+Um cartão exige `dia_vencimento_fatura` (1–31); uma conta corrente não aceita
+`dia_vencimento_fatura` nem `conta_pagamento_padrao_id` preenchidos.
+
+## Fatura do cartão de crédito
+
+| Método | Rota | Descrição |
+| --- | --- | --- |
+| `GET` | `/anos/{ano}/cartoes/{cartao_id}/fatura/{mes}` | Valor em aberto e situação (recalculado, nunca armazenado) |
+| `POST` | `.../fatura/{mes}/pagar` | Corpo opcional `{ "conta_pagamento_id": int }`; gera a transferência (idempotente) |
+| `POST` | `.../fatura/{mes}/desfazer` | Remove a transferência gerada, volta a pendente |
+
+Sem `conta_pagamento_id` no corpo, usa `conta_pagamento_padrao_id` do cartão;
+sem nenhum dos dois, `pagar` devolve 422.
 
 ## Categorias
 
@@ -121,6 +152,10 @@ São globais — valem para todos os anos.
 | `DELETE` | `/anos/{ano}/gastos-fixos/{id}` | Remove o modelo; lançamentos gerados permanecem |
 | `POST` | `.../{id}/meses/{mes}/pagar` | Gera o lançamento do mês (idempotente) |
 | `POST` | `.../{id}/meses/{mes}/desfazer` | Remove o lançamento gerado |
+
+Aceita `forma_pagamento` (mesmo enum de lançamentos); `conta_id` pode ser um
+cartão quando `forma_pagamento=credito`. `forma_pagamento_legado` é o campo de
+texto livre de antes do enum existir, mantido só para exibição.
 
 ## Wishlist
 

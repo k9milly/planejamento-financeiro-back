@@ -3,10 +3,11 @@ import type {
   Categoria,
   Conta,
   DestinoRendimento,
+  FormaPagamento,
   NovoLancamento,
   TipoLancamento,
 } from '../types/api';
-import { ESTILO_TIPO } from '../lib/formato';
+import { ESTILO_FORMA_PAGAMENTO, ESTILO_TIPO } from '../lib/formato';
 
 interface Props {
   ano: number;
@@ -17,6 +18,7 @@ interface Props {
 }
 
 const TIPOS = Object.keys(ESTILO_TIPO) as TipoLancamento[];
+const FORMAS_PAGAMENTO = Object.keys(ESTILO_FORMA_PAGAMENTO) as FormaPagamento[];
 
 /** Tipos que precisam saber qual carteira foi afetada. */
 const COM_DESTINO: TipoLancamento[] = ['rendimento', 'perda'];
@@ -36,14 +38,27 @@ export function FormularioLancamento({
   const [contaDestinoId, setContaDestinoId] = useState('');
   const [categoriaId, setCategoriaId] = useState('');
   const [destino, setDestino] = useState<DestinoRendimento>('guardado');
+  // Pré-selecionado em débito para incentivar o preenchimento, sem tornar o
+  // campo obrigatório no backend (ver ADR-0001).
+  const [formaPagamento, setFormaPagamento] = useState<FormaPagamento>('debito');
   const [descricao, setDescricao] = useState('');
   const [salvando, setSalvando] = useState(false);
   const [erro, setErro] = useState('');
 
-  // Seleciona a primeira conta assim que a lista chega.
+  const ehSaida = tipo === 'saida';
+  const ehCredito = ehSaida && formaPagamento === 'credito';
+  // Crédito só pode sair de um cartão; o resto (inclusive as outras formas de
+  // pagamento) só pode sair de uma conta corrente (ver ADR-0002).
+  const contasCompativeis = contas.filter((c) =>
+    ehCredito ? c.tipo === 'cartao_credito' : c.tipo === 'corrente',
+  );
+
+  // Seleciona a primeira conta compatível assim que a lista chega, e troca de
+  // novo se a conta escolhida deixar de ser compatível (ex.: mudou pra crédito).
   useEffect(() => {
-    if (!contaId && contas.length) setContaId(String(contas[0].id));
-  }, [contas, contaId]);
+    if (contasCompativeis.some((c) => String(c.id) === contaId)) return;
+    setContaId(contasCompativeis.length ? String(contasCompativeis[0].id) : '');
+  }, [contasCompativeis, contaId]);
 
   const ehTransferencia = tipo === 'transferencia';
   const outrasContas = contas.filter((c) => String(c.id) !== contaId);
@@ -69,6 +84,7 @@ export function FormularioLancamento({
         destino: COM_DESTINO.includes(tipo) ? destino : null,
         categoria_id:
           tipo === 'saida' && categoriaId ? Number(categoriaId) : null,
+        forma_pagamento: ehSaida ? formaPagamento : null,
         descricao,
       });
       setValor('');
@@ -116,7 +132,7 @@ export function FormularioLancamento({
           aria-label={ehTransferencia ? 'Conta de origem' : 'Conta'}
           required
         >
-          {contas.map((c) => (
+          {contasCompativeis.map((c) => (
             <option key={c.id} value={c.id}>
               {c.nome}
             </option>
@@ -140,7 +156,7 @@ export function FormularioLancamento({
           </select>
         )}
 
-        {tipo === 'saida' && (
+        {ehSaida && (
           <select
             value={categoriaId}
             onChange={(e) => setCategoriaId(e.target.value)}
@@ -151,6 +167,21 @@ export function FormularioLancamento({
             {categorias.map((c) => (
               <option key={c.id} value={c.id}>
                 {c.nome}
+              </option>
+            ))}
+          </select>
+        )}
+
+        {ehSaida && (
+          <select
+            value={formaPagamento}
+            onChange={(e) => setFormaPagamento(e.target.value as FormaPagamento)}
+            className={campo}
+            aria-label="Forma de pagamento"
+          >
+            {FORMAS_PAGAMENTO.map((f) => (
+              <option key={f} value={f}>
+                {ESTILO_FORMA_PAGAMENTO[f].icone} {ESTILO_FORMA_PAGAMENTO[f].rotulo}
               </option>
             ))}
           </select>

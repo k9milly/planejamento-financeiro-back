@@ -13,8 +13,10 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.models import (
     DestinoRendimento,
+    FormaPagamento,
     Importancia,
     SituacaoGastoFixo,
+    TipoConta,
     TipoLancamento,
 )
 
@@ -30,6 +32,18 @@ class ContaCriar(BaseModel):
     nome: str = Field(min_length=1, max_length=60)
     cor: str = Field(default="#8d7799", pattern=r"^#[0-9a-fA-F]{6}$")
     ordem: int = 0
+    tipo: TipoConta = TipoConta.CORRENTE
+    # Só relevante para tipo=cartao_credito.
+    dia_vencimento_fatura: int | None = Field(default=None, ge=1, le=31)
+    conta_pagamento_padrao_id: int | None = None
+
+    @model_validator(mode="after")
+    def _coerencia_tipo(self) -> "ContaCriar":
+        _validar_coerencia_conta(
+            self.tipo, self.dia_vencimento_fatura, self.conta_pagamento_padrao_id,
+            ValueError,
+        )
+        return self
 
 
 class ContaAtualizar(BaseModel):
@@ -37,6 +51,9 @@ class ContaAtualizar(BaseModel):
     cor: str | None = Field(default=None, pattern=r"^#[0-9a-fA-F]{6}$")
     ordem: int | None = None
     ativa: bool | None = None
+    tipo: TipoConta | None = None
+    dia_vencimento_fatura: int | None = Field(default=None, ge=1, le=31)
+    conta_pagamento_padrao_id: int | None = None
 
 
 class ContaOut(_Base):
@@ -45,6 +62,31 @@ class ContaOut(_Base):
     cor: str
     ordem: int
     ativa: bool
+    tipo: TipoConta
+    dia_vencimento_fatura: int | None
+    conta_pagamento_padrao_id: int | None
+
+
+def _validar_coerencia_conta(
+    tipo: TipoConta,
+    dia_vencimento_fatura: int | None,
+    conta_pagamento_padrao_id: int | None,
+    erro,
+) -> None:
+    """`dia_vencimento_fatura`/`conta_pagamento_padrao_id` só existem para
+    cartões, e um cartão precisa do dia de vencimento para poder lembrar."""
+    if tipo is TipoConta.CARTAO_CREDITO:
+        if dia_vencimento_fatura is None:
+            raise erro(
+                "Um cartão de crédito precisa de um dia de vencimento da fatura."
+            )
+    else:
+        if dia_vencimento_fatura is not None:
+            raise erro("'dia_vencimento_fatura' só se aplica a cartões de crédito.")
+        if conta_pagamento_padrao_id is not None:
+            raise erro(
+                "'conta_pagamento_padrao_id' só se aplica a cartões de crédito."
+            )
 
 
 class SaldoInicialDefinir(BaseModel):
@@ -93,14 +135,20 @@ class LancamentoBase(BaseModel):
     conta_destino_id: int | None = None
     destino: DestinoRendimento | None = None
     categoria_id: int | None = None
+    forma_pagamento: FormaPagamento | None = None
     descricao: str = ""
 
     @model_validator(mode="after")
     def _coerencia(self) -> "LancamentoBase":
-        """Impede combinações que tornariam os totais ambíguos."""
+        """Impede combinações que tornariam os totais ambíguos.
+
+        Não checa aqui se `conta_id` é do tipo certo (corrente/cartão) — isso
+        depende de olhar o banco, e quem faz é o router, com
+        `validar_conta_compativel`, depois de buscar a conta.
+        """
         validar_coerencia(
             self.tipo, self.destino, self.categoria_id, self.conta_id,
-            self.conta_destino_id, ValueError,
+            self.conta_destino_id, self.forma_pagamento, ValueError,
         )
         return self
 
@@ -115,6 +163,7 @@ def validar_coerencia(
     categoria_id: int | None,
     conta_id: int,
     conta_destino_id: int | None,
+    forma_pagamento: FormaPagamento | None,
     erro,
 ) -> None:
     """Regras de combinação entre os campos de um lançamento.
@@ -123,6 +172,10 @@ def validar_coerencia(
     de um PATCH e sobre as linhas confirmadas na importação — três caminhos que
     precisam concordar. Recebe a classe de erro a levantar para servir tanto ao
     Pydantic (ValueError) quanto aos routers (HTTPException).
+
+    Não valida aqui se a conta usada é do tipo certo (corrente/cartão) — essa
+    regra depende do tipo da `Conta` no banco; ver `validar_conta_compativel`,
+    chamada pelos routers depois de buscar a conta envolvida.
     """
     if tipo in TIPOS_COM_DESTINO and destino is None:
         raise erro(
@@ -135,6 +188,9 @@ def validar_coerencia(
     if tipo is not TipoLancamento.SAIDA and categoria_id is not None:
         raise erro("Somente lançamentos do tipo saída podem ter categoria.")
 
+    if tipo is not TipoLancamento.SAIDA and forma_pagamento is not None:
+        raise erro("'forma_pagamento' só se aplica a lançamentos do tipo saída.")
+
     if tipo is TipoLancamento.TRANSFERENCIA:
         if conta_destino_id is None:
             raise erro("Transferência exige a conta de destino.")
@@ -142,6 +198,28 @@ def validar_coerencia(
             raise erro("A conta de destino precisa ser diferente da de origem.")
     elif conta_destino_id is not None:
         raise erro("'conta_destino_id' só se aplica a transferências.")
+
+
+def validar_conta_compativel(
+    tipo: TipoLancamento,
+    forma_pagamento: FormaPagamento | None,
+    conta_tipo: TipoConta,
+    erro,
+) -> None:
+    """Se a conta usada como origem é do tipo certo para a operação.
+
+    Regra do ADR-0002: dinheiro só *sai* de um cartão através do pagamento de
+    fatura (que é uma transferência, não uma saída) — então toda saída, seja
+    qual for a forma de pagamento, e todo lançamento que não seja saída ou
+    transferência, exige conta corrente. Só a saída no crédito exige cartão.
+    """
+    exige_cartao = (
+        tipo is TipoLancamento.SAIDA and forma_pagamento is FormaPagamento.CREDITO
+    )
+    if exige_cartao and conta_tipo is not TipoConta.CARTAO_CREDITO:
+        raise erro("Pagamento no crédito exige uma conta do tipo cartão.")
+    if not exige_cartao and conta_tipo is not TipoConta.CORRENTE:
+        raise erro("Esta forma de pagamento não se aplica a um cartão de crédito.")
 
 
 class LancamentoCriar(LancamentoBase):
@@ -159,6 +237,7 @@ class LancamentoAtualizar(BaseModel):
     conta_destino_id: int | None = None
     destino: DestinoRendimento | None = None
     categoria_id: int | None = None
+    forma_pagamento: FormaPagamento | None = None
     descricao: str | None = None
 
 
@@ -175,6 +254,7 @@ class LancamentoOut(_Base):
     destino: DestinoRendimento | None
     categoria_id: int | None
     categoria: CategoriaOut | None
+    forma_pagamento: FormaPagamento | None
     descricao: str
     fitid: str | None
 
@@ -232,6 +312,9 @@ class TransacaoConfirmar(BaseModel):
     conta_destino_id: int | None = None
     destino: DestinoRendimento | None = None
     categoria_id: int | None = None
+    # O extrato bancário não informa a forma de pagamento — nula por padrão,
+    # o usuário escolhe na revisão se quiser (ver ADR-0001).
+    forma_pagamento: FormaPagamento | None = None
     descricao: str = ""
     # Quando preenchido, cria uma regra para categorizar assim das próximas vezes.
     aprender_padrao: str | None = None
@@ -272,9 +355,14 @@ class GastoFixoCriar(BaseModel):
     descricao: str = Field(min_length=1, max_length=120)
     valor: Decimal = Field(gt=0, max_digits=12, decimal_places=2)
     dia_vencimento: int = Field(default=1, ge=1, le=31)
-    forma_pagamento: str = ""
+    # Enum de verdade, que passa a alimentar a regra "crédito exige cartão"
+    # (ver `validar_conta_compativel`). `forma_pagamento_legado` é só o texto
+    # livre de antes, mantido para exibição do que já estava escrito.
+    forma_pagamento: FormaPagamento | None = None
+    forma_pagamento_legado: str = ""
     categoria_id: int | None = None
-    # De qual conta esta despesa sai; usada ao gerar o lançamento do mês.
+    # De qual conta esta despesa sai; usada ao gerar o lançamento do mês. Pode
+    # ser um cartão quando `forma_pagamento == credito`.
     conta_id: int
 
 
@@ -282,7 +370,8 @@ class GastoFixoAtualizar(BaseModel):
     descricao: str | None = Field(default=None, min_length=1, max_length=120)
     valor: Decimal | None = Field(default=None, gt=0, max_digits=12, decimal_places=2)
     dia_vencimento: int | None = Field(default=None, ge=1, le=31)
-    forma_pagamento: str | None = None
+    forma_pagamento: FormaPagamento | None = None
+    forma_pagamento_legado: str | None = None
     categoria_id: int | None = None
     conta_id: int | None = None
     ativo: bool | None = None
@@ -300,11 +389,36 @@ class GastoFixoOut(_Base):
     descricao: str
     valor: Decimal
     dia_vencimento: int
-    forma_pagamento: str
+    forma_pagamento: FormaPagamento | None
+    forma_pagamento_legado: str
     categoria_id: int | None
     conta_id: int
     ativo: bool
     meses: list[GastoFixoMensalOut] = []
+
+
+# --------------------------------------------------------------------------- #
+# Fatura do cartão de crédito
+# --------------------------------------------------------------------------- #
+class FaturaPagar(BaseModel):
+    """Corpo opcional do pagamento: de qual conta o dinheiro sai.
+
+    Quando omitido, usa `conta_pagamento_padrao_id` do cartão — 422 se nenhum
+    dos dois existir, porque não há como pagar sem saber de onde sai o dinheiro.
+    """
+
+    conta_pagamento_id: int | None = None
+
+
+class FaturaOut(BaseModel):
+    """A fatura em aberto de um cartão em um mês: valor e situação."""
+
+    cartao_id: int
+    ano: int
+    mes: int
+    valor_em_aberto: Decimal
+    situacao: SituacaoGastoFixo
+    lancamento_id: int | None
 
 
 # --------------------------------------------------------------------------- #
@@ -371,6 +485,10 @@ class ResumoMesOut(BaseModel):
     # aparece só para você conferir que o valor bate com o extrato.
     transferido: Decimal
     por_conta: list[CarteirasContaOut]
+    # Fatura em aberto de cada cartão ao fim do mês. `saldo` aqui é <= 0 (a
+    # dívida); `guardado` é sempre "0.00" — reaproveita `CarteirasContaOut`
+    # porque tem o mesmo formato, não por ser a mesma coisa.
+    por_cartao: list[CarteirasContaOut]
     gastos_por_categoria: list[GastoCategoriaOut]
 
 
@@ -384,4 +502,5 @@ class ResumoAnoOut(BaseModel):
     total_entradas: Decimal
     total_saidas: Decimal
     por_conta: list[CarteirasContaOut]
+    por_cartao: list[CarteirasContaOut]
     meses: list[ResumoMesOut]
