@@ -21,6 +21,7 @@ import type {
   Categoria,
   Conta,
   Desejo,
+  Fatura,
   GastoFixo,
   Lancamento,
   ResumoAno,
@@ -38,6 +39,7 @@ export default function App() {
   const [contas, setContas] = useState<Conta[]>([]);
   const [gastosFixos, setGastosFixos] = useState<GastoFixo[]>([]);
   const [desejos, setDesejos] = useState<Desejo[]>([]);
+  const [faturas, setFaturas] = useState<Record<number, Fatura>>({});
   const [erro, setErro] = useState('');
   const [carregando, setCarregando] = useState(true);
   const [importando, setImportando] = useState(false);
@@ -118,6 +120,13 @@ export default function App() {
       setGastosFixos(novosGastos);
       setDesejos(novosDesejos);
       setContas(novasContas);
+
+      const cartoes = novasContas.filter((c) => c.tipo === 'cartao_credito');
+      const listaFaturas = await Promise.all(
+        cartoes.map((c) => api.fatura(anoAtual, c.id, mesAtual)),
+      );
+      setFaturas(Object.fromEntries(listaFaturas.map((f) => [f.cartao_id, f])));
+
       setErro('');
     } catch (e) {
       setErro(e instanceof Error ? e.message : 'Falha ao carregar o mês.');
@@ -288,14 +297,34 @@ export default function App() {
             <GerenciadorContas
               contas={contas}
               posicao={mes.por_conta}
+              posicaoCartoes={mes.por_cartao}
+              faturas={faturas}
               somenteLeitura={arquivado}
-              aoCriar={async (nome, cor) => {
-                await api.criarConta(nome, cor, contas.length);
+              aoCriar={async (dados) => {
+                await api.criarConta({ ...dados, ordem: contas.length });
                 await recarregar();
               }}
               aoExcluir={async (id) => {
                 await api.excluirConta(id);
                 await recarregar();
+              }}
+              aoPagarFatura={async (cartaoId, contaPagamentoId) => {
+                // Erros ficam para o mini-formulário mostrar (a conta pode
+                // faltar), então não são capturados aqui.
+                await api.pagarFatura(anoAtual, cartaoId, mesAtual, contaPagamentoId);
+                await recarregar();
+              }}
+              aoDesfazerFatura={async (cartaoId) => {
+                try {
+                  await api.desfazerFatura(anoAtual, cartaoId, mesAtual);
+                  await recarregar();
+                } catch (e) {
+                  setErro(
+                    e instanceof Error
+                      ? e.message
+                      : 'Não foi possível desfazer o pagamento.',
+                  );
+                }
               }}
             />
 
@@ -312,10 +341,33 @@ export default function App() {
 
             <CalendarioVencimentos
               gastos={gastosFixos}
+              cartoes={contas.filter((c) => c.tipo === 'cartao_credito')}
+              faturas={faturas}
               ano={anoAtual}
               mes={mesAtual}
               somenteLeitura={arquivado}
               aoAlternar={alternarGastoFixo}
+              aoAlternarFatura={async (cartao, pago) => {
+                try {
+                  if (pago) {
+                    await api.pagarFatura(
+                      anoAtual,
+                      cartao.id,
+                      mesAtual,
+                      cartao.conta_pagamento_padrao_id,
+                    );
+                  } else {
+                    await api.desfazerFatura(anoAtual, cartao.id, mesAtual);
+                  }
+                  await recarregar();
+                } catch (e) {
+                  setErro(
+                    e instanceof Error
+                      ? e.message
+                      : 'Não foi possível atualizar a fatura.',
+                  );
+                }
+              }}
             />
 
             <Wishlist

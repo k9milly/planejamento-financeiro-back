@@ -21,7 +21,7 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Iterable, Sequence
 
-from app.models import DestinoRendimento, Lancamento, TipoLancamento
+from app.models import DestinoRendimento, Lancamento, TipoConta, TipoLancamento
 
 ZERO = Decimal("0.00")
 
@@ -60,9 +60,16 @@ class TotaisMes:
     retirado: Decimal = ZERO  # devolvido da reserva para o saldo
     transferido: Decimal = ZERO  # circulou entre contas suas
 
-    # Fechamento por conta e consolidado.
+    # Fechamento por conta e consolidado. Só contas do tipo `corrente` — dívida
+    # de cartão fica em `por_cartao`, para nunca se misturar com dinheiro
+    # disponível (ver ADR-0002 e a spec "Saldo inteligente").
     por_conta: dict[int, Carteiras] = field(default_factory=dict)
     abertura_por_conta: dict[int, Carteiras] = field(default_factory=dict)
+
+    # Fechamento de cada conta-cartão. `saldo` aqui é sempre <= 0: é a fatura
+    # em aberto, não dinheiro disponível. `guardado` fica sempre zero (um
+    # cartão não tem reserva).
+    por_cartao: dict[int, Carteiras] = field(default_factory=dict)
 
     gastos_por_categoria: dict[str, Decimal] = field(default_factory=dict)
 
@@ -98,20 +105,38 @@ def calcular_totais_mes(
     mes: int,
     lancamentos: Iterable[Lancamento],
     abertura: dict[int, Carteiras],
+    tipos_conta: dict[int, TipoConta] | None = None,
 ) -> TotaisMes:
     """Totaliza um único mês a partir de seus lançamentos.
 
-    `abertura` traz as carteiras de cada conta no fechamento do mês anterior.
+    `abertura` traz as carteiras de cada conta (correntes e cartões juntos) no
+    fechamento do mês anterior. `tipos_conta` diz qual é qual — só assim dá
+    para separar `por_conta` (dinheiro disponível) de `por_cartao` (dívida)
+    sem que um bug de filtro esquecido em algum consumidor volte a somar
+    dívida como saldo.
     """
+    tipos_conta = tipos_conta or {}
+
+    def _e_cartao(conta_id: int) -> bool:
+        return tipos_conta.get(conta_id) is TipoConta.CARTAO_CREDITO
+
+    abertura_correntes = {
+        cid: c for cid, c in abertura.items() if not _e_cartao(cid)
+    }
+    abertura_cartoes = {cid: c for cid, c in abertura.items() if _e_cartao(cid)}
+
     totais = TotaisMes(
         mes=mes,
-        abertura_por_conta=_copiar(abertura),
-        por_conta=_copiar(abertura),
+        abertura_por_conta=_copiar(abertura_correntes),
+        por_conta=_copiar(abertura_correntes),
+        por_cartao=_copiar(abertura_cartoes),
     )
     por_categoria: dict[str, Decimal] = defaultdict(lambda: ZERO)
 
     def carteiras(conta_id: int) -> Carteiras:
         """Contas criadas depois do início do ano começam zeradas."""
+        if _e_cartao(conta_id):
+            return totais.por_cartao.setdefault(conta_id, Carteiras())
         return totais.por_conta.setdefault(conta_id, Carteiras())
 
     for lanc in lancamentos:
@@ -171,10 +196,13 @@ def calcular_totais_mes(
 def calcular_ano(
     lancamentos: Sequence[Lancamento],
     aberturas: dict[int, Carteiras],
+    tipos_conta: dict[int, TipoConta] | None = None,
 ) -> list[TotaisMes]:
     """Totaliza os 12 meses em sequência, encadeando os saldos.
 
-    `aberturas` mapeia conta -> carteiras no começo do ano.
+    `aberturas` mapeia conta -> carteiras no começo do ano (correntes e
+    cartões juntos). `tipos_conta` mapeia conta -> tipo, para separar saldo
+    disponível de dívida de cartão em cada mês (ver `calcular_totais_mes`).
 
     Devolve sempre 12 entradas (janeiro a dezembro), mesmo que alguns meses não
     tenham lançamento algum — a interface precisa das 12 páginas.
@@ -187,9 +215,9 @@ def calcular_ano(
     atual = _copiar(aberturas)
 
     for mes in range(1, 13):
-        totais = calcular_totais_mes(mes, por_mes.get(mes, []), atual)
+        totais = calcular_totais_mes(mes, por_mes.get(mes, []), atual, tipos_conta)
         resultado.append(totais)
-        atual = _copiar(totais.por_conta)
+        atual = {**_copiar(totais.por_conta), **_copiar(totais.por_cartao)}
 
     return resultado
 

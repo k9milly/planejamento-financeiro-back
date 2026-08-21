@@ -1,10 +1,11 @@
 import { useEffect, useState, type ChangeEvent } from 'react';
 import { api } from '../lib/api';
-import { diaMes, ESTILO_TIPO, moeda } from '../lib/formato';
+import { diaMes, ESTILO_FORMA_PAGAMENTO, ESTILO_TIPO, moeda } from '../lib/formato';
 import type {
   Categoria,
   Conta,
   DestinoRendimento,
+  FormaPagamento,
   PreviaImportacao,
   TipoLancamento,
   TransacaoConfirmar,
@@ -31,12 +32,16 @@ const TIPOS = (Object.keys(ESTILO_TIPO) as TipoLancamento[]).filter(
 /** Tipos que precisam saber qual carteira foi afetada. */
 const COM_DESTINO: TipoLancamento[] = ['rendimento', 'perda'];
 
+const FORMAS_PAGAMENTO = Object.keys(ESTILO_FORMA_PAGAMENTO) as FormaPagamento[];
+
 /** O que o usuário decidiu sobre cada linha da prévia. */
 interface Escolha {
   incluir: boolean;
   tipo: TipoLancamento;
   categoriaId: string;
   destino: DestinoRendimento;
+  // O extrato não diz a forma de pagamento — '' = não informado (vira null).
+  formaPagamento: FormaPagamento | '';
   padrao: string;
 }
 
@@ -90,6 +95,7 @@ export function ImportarExtrato({
                 ? String(t.categoria_sugerida_id)
                 : '',
               destino: 'guardado',
+              formaPagamento: '',
               padrao: '',
             },
           ]),
@@ -132,6 +138,8 @@ export function ImportarExtrato({
             destino: COM_DESTINO.includes(escolha.tipo) ? escolha.destino : null,
             categoria_id:
               ehSaida && escolha.categoriaId ? Number(escolha.categoriaId) : null,
+            forma_pagamento:
+              ehSaida && escolha.formaPagamento ? escolha.formaPagamento : null,
             descricao: t.descricao,
             aprender_padrao:
               ehSaida && escolha.padrao.trim() && escolha.categoriaId
@@ -253,6 +261,7 @@ export function ImportarExtrato({
                     <th className="pb-2 text-right font-medium">Valor</th>
                     <th className="pb-2 font-medium">Tipo</th>
                     <th className="pb-2 font-medium">Categoria</th>
+                    <th className="pb-2 font-medium">Pagamento</th>
                     <th className="pb-2 font-medium">Lembrar</th>
                   </tr>
                 </thead>
@@ -396,6 +405,27 @@ function Linha({
           </select>
         )}
         {escolha.tipo !== 'saida' && !COM_DESTINO.includes(escolha.tipo) && (
+          <span className="text-xs text-roxo-300">—</span>
+        )}
+      </td>
+      <td className="py-2">
+        {escolha.tipo === 'saida' ? (
+          <select
+            value={escolha.formaPagamento}
+            onChange={(e) =>
+              aoAlterar({ formaPagamento: e.target.value as FormaPagamento | '' })
+            }
+            className={campo}
+            aria-label={`Forma de pagamento de ${transacao.descricao}`}
+          >
+            <option value="">Não informar</option>
+            {FORMAS_PAGAMENTO.map((f) => (
+              <option key={f} value={f}>
+                {ESTILO_FORMA_PAGAMENTO[f].icone} {ESTILO_FORMA_PAGAMENTO[f].rotulo}
+              </option>
+            ))}
+          </select>
+        ) : (
           <span className="text-xs text-roxo-300">—</span>
         )}
       </td>

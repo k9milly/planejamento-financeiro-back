@@ -66,3 +66,11 @@ export const ESTILO_TIPO = {
     classe: 'bg-roxo-100 text-roxo-600 dark:bg-roxo-700 dark:text-roxo-100',
   },
 } as const;
+
+/** Ícone e rótulo curto de cada forma de pagamento, para a tabela conferir de relance. */
+export const ESTILO_FORMA_PAGAMENTO = {
+  credito: { rotulo: 'Crédito', icone: '💳' },
+  debito: { rotulo: 'Débito', icone: '💵' },
+  pix: { rotulo: 'Pix', icone: '⚡' },
+  dinheiro: { rotulo: 'Dinheiro', icone: '💰' },
+} as const;

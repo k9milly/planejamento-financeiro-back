@@ -104,7 +104,9 @@ def arquivar_ano(
         )
 
     meses = _calcular(ano_ref, db)
-    fechamento = meses[-1].por_conta
+    # Inclui cartões: a dívida em aberto também precisa encadear para o ano
+    # seguinte, do mesmo jeito que o saldo de uma conta corrente.
+    fechamento = {**meses[-1].por_conta, **meses[-1].por_cartao}
 
     ano_ref.arquivado = True
     ano_ref.arquivado_em = datetime.now()
@@ -197,6 +199,7 @@ def resumo_do_ano(
                 perdas=t.perdas,
                 transferido=t.transferido,
                 por_conta=por_conta(t.por_conta),
+                por_cartao=por_conta(t.por_cartao),
                 gastos_por_categoria=[
                     GastoCategoriaOut(
                         categoria=nome,
@@ -220,6 +223,7 @@ def resumo_do_ano(
         total_entradas=sum((t.entradas for t in meses), ZERO),
         total_saidas=sum((t.saidas for t in meses), ZERO),
         por_conta=por_conta(meses[-1].por_conta),
+        por_cartao=por_conta(meses[-1].por_cartao),
         meses=resumos,
     )
 
@@ -282,4 +286,8 @@ def _calcular(ano_ref: Ano, db: Session):
         .filter(Lancamento.ano_id == ano_ref.id)
         .all()
     )
-    return calcular_ano(lancamentos, aberturas_do_ano(ano_ref, db))
+    # Precisa de todas as contas, não só as ativas: um lançamento antigo pode
+    # apontar para uma conta já desativada, e ela precisa continuar sendo
+    # reconhecida como corrente ou cartão para o cálculo separar certo.
+    tipos_conta = {c.id: c.tipo for c in db.query(Conta)}
+    return calcular_ano(lancamentos, aberturas_do_ano(ano_ref, db), tipos_conta)
