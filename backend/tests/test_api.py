@@ -552,6 +552,12 @@ class TestFaturas:
         )
         assert resposta.status_code == 422
 
+    def test_fatura_traz_o_dia_de_vencimento(self, cliente, ano, cartao):
+        """Espelha `Conta.dia_vencimento_fatura` para o calendário não precisar
+        cruzar esta resposta com a lista de contas (ver `docs/CONTRATO-API.md`)."""
+        fatura = cliente.get(f"/anos/2026/cartoes/{cartao['id']}/fatura/4").json()
+        assert fatura["dia_vencimento"] == cartao["dia_vencimento_fatura"] == 10
+
 
 class TestWishlist:
     def test_total_soma_apenas_os_marcados(self, cliente, ano):
@@ -566,3 +572,64 @@ class TestWishlist:
         assert total["total_marcado"] == "300.00"
         assert total["total_geral"] == "4300.00"
         assert total["quantidade_marcada"] == 1
+
+
+class TestPreferenciaLayout:
+    """`GET`/`PUT /preferencias/layout-dashboard` — Fase 7 do PLANO-BACKEND."""
+
+    def test_layout_comeca_nulo(self, cliente):
+        """`null` é o sinal de "nunca arrumou o painel"."""
+        resposta = cliente.get("/preferencias/layout-dashboard")
+        assert resposta.status_code == 200
+        assert resposta.json()["layout"] is None
+
+    def test_salva_e_devolve_o_mesmo_conteudo(self, cliente):
+        layout = '[{"i":"totais","x":0,"y":0,"w":2,"h":1}]'
+        salvo = cliente.put("/preferencias/layout-dashboard", json={"layout": layout})
+        assert salvo.status_code == 200
+        assert salvo.json()["layout"] == layout
+
+        # O PUT ecoa o valor, então reler tem de dar exatamente o mesmo.
+        assert cliente.get("/preferencias/layout-dashboard").json()["layout"] == layout
+
+    def test_conteudo_nao_e_validado(self, cliente):
+        """O layout é texto opaco: o backend guarda o que vier, mesmo não-JSON.
+
+        Validar o formato aqui obrigaria a mexer no backend toda vez que a
+        interface ganhasse um bloco novo — ver `Usuario.layout_dashboard`.
+        """
+        cliente.put("/preferencias/layout-dashboard", json={"layout": "nem json é"})
+        assert cliente.get("/preferencias/layout-dashboard").json()["layout"] == (
+            "nem json é"
+        )
+
+    def test_layout_e_por_usuario(self, cliente, cliente_sem_login, sessao_teste):
+        """A disposição da tela é de quem a arrumou, não do app inteiro.
+
+        Diferente das cores da forma de pagamento, que são globais.
+        """
+        from app.models import Usuario
+        from app.security import gerar_hash
+
+        cliente.put("/preferencias/layout-dashboard", json={"layout": "layout-da-ana"})
+
+        db = sessao_teste()
+        try:
+            db.add(Usuario(email="bia@exemplo.com", senha_hash=gerar_hash("senha-bia")))
+            db.commit()
+        finally:
+            db.close()
+
+        token = cliente_sem_login.post(
+            "/auth/login", json={"email": "bia@exemplo.com", "senha": "senha-bia"}
+        ).json()["token"]
+        resposta = cliente_sem_login.get(
+            "/preferencias/layout-dashboard",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert resposta.json()["layout"] is None
+
+    def test_exige_sessao(self, cliente_sem_login):
+        assert cliente_sem_login.get(
+            "/preferencias/layout-dashboard"
+        ).status_code == 401
