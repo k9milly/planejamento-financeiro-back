@@ -121,7 +121,7 @@ function SeletorModo({
 }) {
   const opcoes: { valor: ModoVisual; rotulo: string }[] = [
     { valor: 'planilha', rotulo: 'Planilha' },
-    { valor: 'estatico', rotulo: 'Painel' },
+    { valor: 'painel', rotulo: 'Painel' },
   ];
 
   return (
