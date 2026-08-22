@@ -4,6 +4,7 @@ import type {
   Ano,
   Categoria,
   Conta,
+  CorPagamento,
   Desejo,
   Fatura,
   FormaPagamento,
@@ -167,6 +168,15 @@ export const api = {
       body: JSON.stringify({ nome, ...(cor ? { cor } : {}) }),
     }),
 
+  atualizarCategoria: (
+    id: number,
+    dados: Partial<{ nome: string; cor: string; ativa: boolean }>,
+  ) =>
+    requisitar<Categoria>(`/categorias/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(dados),
+    }),
+
   excluirCategoria: (id: number) =>
     requisitar<void>(`/categorias/${id}`, { method: 'DELETE' }),
 
@@ -318,5 +328,14 @@ export const api = {
   desfazerFatura: (ano: number, cartaoId: number, mes: number) =>
     requisitar<void>(`/anos/${ano}/cartoes/${cartaoId}/fatura/${mes}/desfazer`, {
       method: 'POST',
+    }),
+
+  listarCoresPagamento: () =>
+    requisitar<CorPagamento[]>('/preferencias/cores-forma-pagamento'),
+
+  definirCorPagamento: (forma: FormaPagamento, cor: string) =>
+    requisitar<CorPagamento>(`/preferencias/cores-forma-pagamento/${forma}`, {
+      method: 'PUT',
+      body: JSON.stringify({ cor }),
     }),
 };

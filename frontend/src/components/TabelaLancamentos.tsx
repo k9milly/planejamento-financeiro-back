@@ -1,17 +1,14 @@
 import { Card } from './Card';
 import { diaMes, ESTILO_FORMA_PAGAMENTO, ESTILO_TIPO, moeda } from '../lib/formato';
+import { useCoresPagamento } from '../lib/coresPagamento';
 import type { Conta, Lancamento } from '../types/api';
-
-/** `forma_pagamento` nulo é tratado como débito em todo lugar (ADR-0001). */
-function formaPagamento(lanc: Lancamento) {
-  return ESTILO_FORMA_PAGAMENTO[lanc.forma_pagamento ?? 'debito'];
-}
 
 interface Props {
   titulo: string;
   lancamentos: Lancamento[];
   contas: Conta[];
   somenteLeitura: boolean;
+  aoEditar: (lancamento: Lancamento) => void;
   aoExcluir: (id: number) => void;
 }
 
@@ -27,10 +24,19 @@ export function TabelaLancamentos({
   lancamentos,
   contas,
   somenteLeitura,
+  aoEditar,
   aoExcluir,
 }: Props) {
+  const { cores } = useCoresPagamento();
+
   const nomeConta = (id: number | null) =>
     contas.find((c) => c.id === id)?.nome ?? '—';
+
+  /** `forma_pagamento` nulo é tratado como débito em todo lugar (ADR-0001). */
+  function rotuloPagamento(lanc: Lancamento) {
+    const forma = lanc.forma_pagamento ?? 'debito';
+    return { texto: ESTILO_FORMA_PAGAMENTO[forma].rotulo, cor: cores[forma] };
+  }
 
   return (
     <Card titulo={titulo} largo>
@@ -44,6 +50,7 @@ export function TabelaLancamentos({
           <ul className="divide-y divide-roxo-100 md:hidden dark:divide-roxo-700">
             {lancamentos.map((lanc) => {
               const estilo = ESTILO_TIPO[lanc.tipo];
+              const pagamento = rotuloPagamento(lanc);
               return (
                 <li key={lanc.id} className="py-3">
                   <div className="flex items-start justify-between gap-3">
@@ -55,7 +62,14 @@ export function TabelaLancamentos({
                         {diaMes(lanc.data)} · {nomeConta(lanc.conta_id)}
                         {lanc.conta_destino_id !== null &&
                           ` → ${nomeConta(lanc.conta_destino_id)}`}
-                        {lanc.categoria && ` · ${lanc.categoria.nome}`}
+                        {lanc.categoria && (
+                          <>
+                            {' · '}
+                            <span style={{ color: lanc.categoria.cor }}>
+                              {lanc.categoria.nome}
+                            </span>
+                          </>
+                        )}
                       </p>
                     </div>
                     <div className="shrink-0 text-right">
@@ -69,21 +83,29 @@ export function TabelaLancamentos({
                       </span>
                       {lanc.tipo === 'saida' && (
                         <span
-                          className="mt-1 block text-[10px] text-roxo-400 dark:text-roxo-200"
-                          title={formaPagamento(lanc).rotulo}
+                          className="mt-1 block text-[10px] font-medium"
+                          style={{ color: pagamento.cor }}
                         >
-                          {formaPagamento(lanc).icone} {formaPagamento(lanc).rotulo}
+                          {pagamento.texto}
                         </span>
                       )}
                     </div>
                   </div>
                   {!somenteLeitura && (
-                    <button
-                      onClick={() => aoExcluir(lanc.id)}
-                      className="mt-1 text-xs text-roxo-300 hover:text-rose-600"
-                    >
-                      Excluir
-                    </button>
+                    <div className="mt-1 flex gap-3">
+                      <button
+                        onClick={() => aoEditar(lanc)}
+                        className="text-xs text-roxo-300 hover:text-roxo-500"
+                      >
+                        Editar
+                      </button>
+                      <button
+                        onClick={() => aoExcluir(lanc.id)}
+                        className="text-xs text-roxo-300 hover:text-rose-600"
+                      >
+                        Excluir
+                      </button>
+                    </div>
                   )}
                 </li>
               );
@@ -108,6 +130,7 @@ export function TabelaLancamentos({
               <tbody className="divide-y divide-roxo-100 dark:divide-roxo-700">
                 {lancamentos.map((lanc) => {
                   const estilo = ESTILO_TIPO[lanc.tipo];
+                  const pagamento = rotuloPagamento(lanc);
                   return (
                     <tr
                       key={lanc.id}
@@ -134,15 +157,24 @@ export function TabelaLancamentos({
                         )}
                       </td>
                       <td className="py-2 text-roxo-500 dark:text-roxo-200">
-                        {lanc.categoria?.nome ?? '—'}
-                      </td>
-                      <td className="py-2 text-roxo-500 dark:text-roxo-200">
-                        {lanc.tipo === 'saida' ? (
-                          <span title={formaPagamento(lanc).rotulo}>
-                            {formaPagamento(lanc).icone}
+                        {lanc.categoria ? (
+                          <span style={{ color: lanc.categoria.cor }}>
+                            {lanc.categoria.nome}
                           </span>
                         ) : (
                           '—'
+                        )}
+                      </td>
+                      <td className="py-2">
+                        {lanc.tipo === 'saida' ? (
+                          <span
+                            className="text-xs font-medium"
+                            style={{ color: pagamento.cor }}
+                          >
+                            {pagamento.texto}
+                          </span>
+                        ) : (
+                          <span className="text-roxo-300">—</span>
                         )}
                       </td>
                       <td className="max-w-xs truncate py-2 text-roxo-500 dark:text-roxo-200">
@@ -152,7 +184,14 @@ export function TabelaLancamentos({
                         {moeda(lanc.valor)}
                       </td>
                       {!somenteLeitura && (
-                        <td className="py-2 text-right">
+                        <td className="py-2 text-right whitespace-nowrap">
+                          <button
+                            onClick={() => aoEditar(lanc)}
+                            className="rounded px-2 py-1 text-xs text-roxo-300 hover:bg-roxo-100 hover:text-roxo-600 dark:hover:bg-roxo-700"
+                            aria-label={`Editar lançamento de ${moeda(lanc.valor)}`}
+                          >
+                            Editar
+                          </button>
                           <button
                             onClick={() => aoExcluir(lanc.id)}
                             className="rounded px-2 py-1 text-xs text-roxo-300 hover:bg-rose-50 hover:text-rose-600"
