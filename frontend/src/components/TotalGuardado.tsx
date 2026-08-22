@@ -8,14 +8,21 @@ import type { ResumoAno } from '../types/api';
  * Meses sem movimentação na reserva são omitidos — listar doze linhas zeradas
  * esconderia as que importam.
  */
-export function TotalGuardado({ resumo }: { resumo: ResumoAno }) {
+export function TotalGuardado({
+  resumo,
+  preencher,
+}: {
+  resumo: ResumoAno;
+  /** No modo painel, quem define a altura é a célula da grade. */
+  preencher?: boolean;
+}) {
   const comMovimento = resumo.meses.filter(
     (m) => Number(m.guardado_no_mes) !== 0,
   );
   const reservas = resumo.por_conta.filter((c) => Number(c.guardado) !== 0);
 
   return (
-    <Card titulo="Total guardado">
+    <Card titulo="Total guardado" preencher={preencher}>
       <div className="divide-y divide-roxo-100 dark:divide-roxo-700">
         {comMovimento.length === 0 ? (
           <p className="py-2 text-sm text-roxo-300">

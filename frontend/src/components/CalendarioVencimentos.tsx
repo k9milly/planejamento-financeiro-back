@@ -13,6 +13,8 @@ interface Props {
   somenteLeitura: boolean;
   aoAlternar: (gasto: GastoFixo, pago: boolean) => Promise<void>;
   aoAlternarFatura: (cartao: Conta, pago: boolean) => Promise<void>;
+  /** No modo painel, quem define a altura é a célula da grade. */
+  preencher?: boolean;
 }
 
 const DIAS_SEMANA = ['D', 'S', 'T', 'Q', 'Q', 'S', 'S'];
@@ -39,6 +41,7 @@ export function CalendarioVencimentos({
   somenteLeitura,
   aoAlternar,
   aoAlternarFatura,
+  preencher,
 }: Props) {
   const ultimoDia = new Date(ano, mes, 0).getDate();
   // getDay() devolve 0 para domingo, que é como a grade começa.
@@ -73,7 +76,10 @@ export function CalendarioVencimentos({
   ];
 
   return (
-    <Card titulo={`O que vence em ${NOMES_MESES[mes - 1].toLowerCase()}`}>
+    <Card
+      preencher={preencher}
+      titulo={`O que vence em ${NOMES_MESES[mes - 1].toLowerCase()}`}
+    >
       {ativos.length === 0 && cartoes.length === 0 ? (
         <p className="text-sm text-roxo-300 dark:text-roxo-300">
           Cadastre um gasto fixo ou um cartão para ver os vencimentos aqui.
