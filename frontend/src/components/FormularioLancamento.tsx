@@ -1,9 +1,10 @@
-import { useEffect, useState, type FormEvent } from 'react';
+import { useEffect, useState, type FormEvent, type ReactNode } from 'react';
 import type {
   Categoria,
   Conta,
   DestinoRendimento,
   FormaPagamento,
+  Lancamento,
   NovoLancamento,
   TipoLancamento,
 } from '../types/api';
@@ -15,6 +16,15 @@ interface Props {
   contas: Conta[];
   categorias: Categoria[];
   aoSalvar: (dados: NovoLancamento) => Promise<void>;
+  aoCriarCategoria: (nome: string) => Promise<Categoria>;
+  /** Presente = formulário em modo edição, pré-preenchido com este lançamento. */
+  lancamento?: Lancamento | null;
+  aoAtualizar?: (id: number, dados: Partial<NovoLancamento>) => Promise<void>;
+  aoCancelar?: () => void;
+  /** Botão de engrenagem + painel para criar/editar/excluir categorias. */
+  menuCategorias?: ReactNode;
+  /** Botão de engrenagem + painel para editar as cores da forma de pagamento. */
+  menuFormaPagamento?: ReactNode;
 }
 
 const TIPOS = Object.keys(ESTILO_TIPO) as TipoLancamento[];
@@ -23,27 +33,62 @@ const FORMAS_PAGAMENTO = Object.keys(ESTILO_FORMA_PAGAMENTO) as FormaPagamento[]
 /** Tipos que precisam saber qual carteira foi afetada. */
 const COM_DESTINO: TipoLancamento[] = ['rendimento', 'perda'];
 
-/** Formulário de novo lançamento, embutido acima da tabela do mês. */
+/** Sentinela do "+ nova categoria" dentro do <select>; nunca é um id de verdade. */
+const NOVA_CATEGORIA = '__nova__';
+
+/**
+ * Formulário de lançamento: cria um novo, ou edita um existente quando
+ * `lancamento` é passado.
+ *
+ * O componente que o renderiza deve usar `key={lancamento?.id ?? 'novo'}`
+ * para forçar remontagem ao trocar de alvo — mais simples e menos propenso a
+ * erro do que sincronizar cada campo via `useEffect` toda vez que o
+ * lançamento sendo editado muda.
+ */
 export function FormularioLancamento({
   ano,
   mes,
   contas,
   categorias,
   aoSalvar,
+  aoCriarCategoria,
+  lancamento,
+  aoAtualizar,
+  aoCancelar,
+  menuCategorias,
+  menuFormaPagamento,
 }: Props) {
-  const [tipo, setTipo] = useState<TipoLancamento>('saida');
-  const [valor, setValor] = useState('');
-  const [dia, setDia] = useState('1');
-  const [contaId, setContaId] = useState('');
-  const [contaDestinoId, setContaDestinoId] = useState('');
-  const [categoriaId, setCategoriaId] = useState('');
-  const [destino, setDestino] = useState<DestinoRendimento>('guardado');
+  const editando = lancamento ?? null;
+
+  const [tipo, setTipo] = useState<TipoLancamento>(editando?.tipo ?? 'saida');
+  const [valor, setValor] = useState(editando?.valor ?? '');
+  const [dia, setDia] = useState(
+    editando ? String(Number(editando.data.split('-')[2])) : '',
+  );
+  const [contaId, setContaId] = useState(
+    editando ? String(editando.conta_id) : '',
+  );
+  const [contaDestinoId, setContaDestinoId] = useState(
+    editando?.conta_destino_id ? String(editando.conta_destino_id) : '',
+  );
+  const [categoriaId, setCategoriaId] = useState(
+    editando?.categoria_id ? String(editando.categoria_id) : '',
+  );
+  const [destino, setDestino] = useState<DestinoRendimento>(
+    editando?.destino ?? 'guardado',
+  );
   // Pré-selecionado em débito para incentivar o preenchimento, sem tornar o
   // campo obrigatório no backend (ver ADR-0001).
-  const [formaPagamento, setFormaPagamento] = useState<FormaPagamento>('debito');
-  const [descricao, setDescricao] = useState('');
+  const [formaPagamento, setFormaPagamento] = useState<FormaPagamento>(
+    editando?.forma_pagamento ?? 'debito',
+  );
+  const [descricao, setDescricao] = useState(editando?.descricao ?? '');
   const [salvando, setSalvando] = useState(false);
   const [erro, setErro] = useState('');
+
+  // Criação de categoria embutida no seletor.
+  const [criandoCategoria, setCriandoCategoria] = useState(false);
+  const [nomeNovaCategoria, setNomeNovaCategoria] = useState('');
 
   const ehSaida = tipo === 'saida';
   const ehCredito = ehSaida && formaPagamento === 'credito';
@@ -63,6 +108,19 @@ export function FormularioLancamento({
   const ehTransferencia = tipo === 'transferencia';
   const outrasContas = contas.filter((c) => String(c.id) !== contaId);
 
+  async function criarCategoriaInline() {
+    const nome = nomeNovaCategoria.trim();
+    if (!nome) return;
+    try {
+      const nova = await aoCriarCategoria(nome);
+      setCategoriaId(String(nova.id));
+      setCriandoCategoria(false);
+      setNomeNovaCategoria('');
+    } catch (e) {
+      setErro(e instanceof Error ? e.message : 'Não foi possível criar a categoria.');
+    }
+  }
+
   async function enviar(evento: FormEvent) {
     evento.preventDefault();
     setErro('');
@@ -71,24 +129,46 @@ export function FormularioLancamento({
       setErro('Escolha a conta de destino da transferência.');
       return;
     }
+    if (!contaId) {
+      setErro(
+        ehCredito
+          ? 'Cadastre um cartão de crédito antes de lançar no crédito.'
+          : 'Cadastre uma conta antes de lançar.',
+      );
+      return;
+    }
+
+    // Ao editar, o dia digitado vale dentro do ANO-MÊS do próprio lançamento
+    // — não do mês que estava aberto na tela quando o formulário abriu. Sem
+    // isso, editar um lançamento antigo enquanto se vê o mês atual movia a
+    // data dele para o mês atual silenciosamente.
+    const [anoBase, mesBase] = editando
+      ? editando.data.split('-')
+      : [String(ano), String(mes).padStart(2, '0')];
+
+    const dados: NovoLancamento = {
+      data: `${anoBase}-${mesBase}-${dia.padStart(2, '0')}`,
+      valor,
+      tipo,
+      conta_id: Number(contaId),
+      // O backend recusa campos que não pertencem ao tipo escolhido.
+      conta_destino_id: ehTransferencia ? Number(contaDestinoId) : null,
+      destino: COM_DESTINO.includes(tipo) ? destino : null,
+      categoria_id: tipo === 'saida' && categoriaId ? Number(categoriaId) : null,
+      forma_pagamento: ehSaida ? formaPagamento : null,
+      descricao,
+    };
 
     setSalvando(true);
     try {
-      await aoSalvar({
-        data: `${ano}-${String(mes).padStart(2, '0')}-${dia.padStart(2, '0')}`,
-        valor,
-        tipo,
-        conta_id: Number(contaId),
-        // O backend recusa campos que não pertencem ao tipo escolhido.
-        conta_destino_id: ehTransferencia ? Number(contaDestinoId) : null,
-        destino: COM_DESTINO.includes(tipo) ? destino : null,
-        categoria_id:
-          tipo === 'saida' && categoriaId ? Number(categoriaId) : null,
-        forma_pagamento: ehSaida ? formaPagamento : null,
-        descricao,
-      });
-      setValor('');
-      setDescricao('');
+      if (editando && aoAtualizar) {
+        await aoAtualizar(editando.id, dados);
+        aoCancelar?.();
+      } else {
+        await aoSalvar(dados);
+        setValor('');
+        setDescricao('');
+      }
     } catch (e) {
       setErro(e instanceof Error ? e.message : 'Não foi possível salvar.');
     } finally {
@@ -100,7 +180,14 @@ export function FormularioLancamento({
     'rounded-lg border border-roxo-100 px-3 py-2 text-sm focus:border-roxo-400 focus:outline-none dark:border-roxo-700 dark:focus:border-roxo-300';
 
   return (
-    <form onSubmit={enviar} className="mb-4 space-y-3">
+    <form
+      onSubmit={enviar}
+      className={
+        editando
+          ? 'mb-4 space-y-3 rounded-lg border border-roxo-300 p-3 dark:border-roxo-500'
+          : 'mb-4 space-y-3'
+      }
+    >
       <div className="flex flex-wrap gap-2">
         <input
           type="number"
@@ -108,6 +195,7 @@ export function FormularioLancamento({
           max="31"
           value={dia}
           onChange={(e) => setDia(e.target.value)}
+          placeholder="Dia"
           className={`${campo} w-16`}
           aria-label="Dia"
           required
@@ -132,6 +220,11 @@ export function FormularioLancamento({
           aria-label={ehTransferencia ? 'Conta de origem' : 'Conta'}
           required
         >
+          {contasCompativeis.length === 0 && (
+            <option value="" disabled>
+              {ehCredito ? 'Nenhum cartão cadastrado' : 'Nenhuma conta cadastrada'}
+            </option>
+          )}
           {contasCompativeis.map((c) => (
             <option key={c.id} value={c.id}>
               {c.nome}
@@ -156,35 +249,82 @@ export function FormularioLancamento({
           </select>
         )}
 
-        {ehSaida && (
-          <select
-            value={categoriaId}
-            onChange={(e) => setCategoriaId(e.target.value)}
-            className={campo}
-            aria-label="Categoria"
-          >
-            <option value="">Sem categoria</option>
-            {categorias.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.nome}
-              </option>
-            ))}
-          </select>
+        {ehSaida && !criandoCategoria && (
+          <span className="flex items-center gap-1">
+            <select
+              value={categoriaId}
+              onChange={(e) => {
+                if (e.target.value === NOVA_CATEGORIA) {
+                  setCriandoCategoria(true);
+                  return;
+                }
+                setCategoriaId(e.target.value);
+              }}
+              className={campo}
+              aria-label="Categoria"
+            >
+              <option value="">Sem categoria</option>
+              {categorias.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.nome}
+                </option>
+              ))}
+              <option value={NOVA_CATEGORIA}>+ Nova categoria…</option>
+            </select>
+            {menuCategorias}
+          </span>
+        )}
+
+        {ehSaida && criandoCategoria && (
+          <span className="flex items-center gap-1">
+            <input
+              value={nomeNovaCategoria}
+              onChange={(e) => setNomeNovaCategoria(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  void criarCategoriaInline();
+                }
+                if (e.key === 'Escape') setCriandoCategoria(false);
+              }}
+              placeholder="Nome da categoria"
+              autoFocus
+              className={`${campo} w-36`}
+              aria-label="Nome da nova categoria"
+            />
+            <button
+              type="button"
+              onClick={() => void criarCategoriaInline()}
+              className="rounded-lg bg-roxo-500 px-2 py-2 text-xs font-medium text-white hover:bg-roxo-400"
+            >
+              Criar
+            </button>
+            <button
+              type="button"
+              onClick={() => setCriandoCategoria(false)}
+              className="text-xs text-roxo-300 hover:text-roxo-500"
+            >
+              Cancelar
+            </button>
+          </span>
         )}
 
         {ehSaida && (
-          <select
-            value={formaPagamento}
-            onChange={(e) => setFormaPagamento(e.target.value as FormaPagamento)}
-            className={campo}
-            aria-label="Forma de pagamento"
-          >
-            {FORMAS_PAGAMENTO.map((f) => (
-              <option key={f} value={f}>
-                {ESTILO_FORMA_PAGAMENTO[f].icone} {ESTILO_FORMA_PAGAMENTO[f].rotulo}
-              </option>
-            ))}
-          </select>
+          <span className="flex items-center gap-1">
+            <select
+              value={formaPagamento}
+              onChange={(e) => setFormaPagamento(e.target.value as FormaPagamento)}
+              className={campo}
+              aria-label="Forma de pagamento"
+            >
+              {FORMAS_PAGAMENTO.map((f) => (
+                <option key={f} value={f}>
+                  {ESTILO_FORMA_PAGAMENTO[f].rotulo}
+                </option>
+              ))}
+            </select>
+            {menuFormaPagamento}
+          </span>
         )}
 
         {COM_DESTINO.includes(tipo) && (
@@ -222,8 +362,17 @@ export function FormularioLancamento({
           disabled={salvando || !contaId}
           className="rounded-lg bg-roxo-500 px-4 py-2 text-sm font-medium text-white hover:bg-roxo-400 disabled:opacity-50"
         >
-          {salvando ? 'Salvando…' : 'Adicionar'}
+          {salvando ? 'Salvando…' : editando ? 'Salvar' : 'Adicionar'}
         </button>
+        {editando && (
+          <button
+            type="button"
+            onClick={aoCancelar}
+            className="rounded-lg border border-roxo-200 px-4 py-2 text-sm font-medium text-roxo-500 hover:bg-roxo-100 dark:border-roxo-600 dark:text-roxo-100 dark:hover:bg-roxo-700"
+          >
+            Cancelar
+          </button>
+        )}
       </div>
 
       {erro && <p className="text-sm text-rose-600">{erro}</p>}

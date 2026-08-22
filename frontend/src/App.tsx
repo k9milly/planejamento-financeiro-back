@@ -2,12 +2,15 @@ import { useCallback, useEffect, useState } from 'react';
 import { api } from './lib/api';
 import { NOMES_MESES } from './lib/formato';
 import { useTema } from './lib/tema';
+import { BotaoConfiguracao } from './components/BotaoConfiguracao';
 import { BotaoTema } from './components/BotaoTema';
 import { CalendarioVencimentos } from './components/CalendarioVencimentos';
+import { CoresPagamento } from './components/CoresPagamento';
 import { FormularioLancamento } from './components/FormularioLancamento';
 import { GastosFixos } from './components/GastosFixos';
 import { GastosPorCategoria } from './components/GastosPorCategoria';
 import { GerenciadorAnos } from './components/GerenciadorAnos';
+import { GerenciadorCategorias } from './components/GerenciadorCategorias';
 import { GerenciadorContas } from './components/GerenciadorContas';
 import { ImportarExtrato } from './components/ImportarExtrato';
 import { Login } from './components/Login';
@@ -43,6 +46,9 @@ export default function App() {
   const [erro, setErro] = useState('');
   const [carregando, setCarregando] = useState(true);
   const [importando, setImportando] = useState(false);
+  const [editandoLancamento, setEditandoLancamento] = useState<Lancamento | null>(
+    null,
+  );
   // null = ainda verificando o token guardado.
   const [autenticado, setAutenticado] = useState<boolean | null>(null);
 
@@ -164,6 +170,31 @@ export default function App() {
     },
   );
 
+  /**
+   * Categorias mudam fora do fluxo de `recarregar()` (que não as busca), e o
+   * nome/cor delas aparece dentro de "Gastos por categoria" — por isso, além
+   * de recarregar a lista, também refaz o resumo do mês.
+   */
+  async function aposMudarCategorias() {
+    setCategorias(await api.listarCategorias());
+    await recarregar();
+  }
+
+  async function criarCategoriaInline(nome: string) {
+    const nova = await api.criarCategoria(nome);
+    setCategorias((atual) => [...atual, nova]);
+    return nova;
+  }
+
+  async function atualizarLancamento(
+    id: number,
+    dados: Partial<Parameters<typeof api.criarLancamento>[1]>,
+  ) {
+    if (anoAtual === null) return;
+    await api.atualizarLancamento(anoAtual, id, dados);
+    await recarregar();
+  }
+
   /** Ações que mudam a lista de anos precisam recarregá-la, não só o resumo. */
   async function comAnos(operacao: () => Promise<unknown>, irPara?: number) {
     try {
@@ -215,7 +246,10 @@ export default function App() {
           <GerenciadorAnos
             anos={anos}
             anoAtual={anoAtual}
-            aoTrocar={setAnoAtual}
+            aoTrocar={(ano) => {
+              setEditandoLancamento(null);
+              setAnoAtual(ano);
+            }}
             aoCriar={(ano) => comAnos(() => api.criarAno(ano), ano)}
             aoArquivar={(ano) => comAnos(() => api.arquivarAno(ano))}
             aoDesarquivar={(ano) => comAnos(() => api.desarquivarAno(ano))}
@@ -252,7 +286,10 @@ export default function App() {
               return (
                 <li key={nome}>
                   <button
-                    onClick={() => setMesAtual(numero)}
+                    onClick={() => {
+                      setEditandoLancamento(null);
+                      setMesAtual(numero);
+                    }}
                     aria-current={ativo ? 'page' : undefined}
                     className={`whitespace-nowrap border-b-2 px-3 py-2 text-sm ${
                       ativo
@@ -292,7 +329,7 @@ export default function App() {
           <div className="grid gap-5 lg:grid-cols-3">
             <TotalGuardado resumo={resumo} />
             <TotaisMes mes={mes} />
-            <GastosPorCategoria mes={mes} />
+            <GastosPorCategoria mes={mes} categorias={categorias} />
 
             <GerenciadorContas
               contas={contas}
@@ -330,11 +367,11 @@ export default function App() {
 
             <GastosFixos
               gastos={gastosFixos}
-              categorias={categorias}
               contas={contas}
               mes={mesAtual}
               somenteLeitura={arquivado}
               aoCriar={acao(api.criarGastoFixo)}
+              aoAtualizar={acao(api.atualizarGastoFixo)}
               aoAlternar={alternarGastoFixo}
               aoExcluir={acao(api.excluirGastoFixo)}
             />
@@ -382,11 +419,48 @@ export default function App() {
             <div className="lg:col-span-3">
               {!arquivado && (
                 <FormularioLancamento
+                  // Remonta ao trocar entre "novo" e "editando algo": mais
+                  // simples e menos propenso a erro do que sincronizar cada
+                  // campo via useEffect a cada troca de alvo.
+                  key={editandoLancamento?.id ?? 'novo'}
                   ano={anoAtual}
                   mes={mesAtual}
                   contas={contas}
                   categorias={categorias}
                   aoSalvar={acao(api.criarLancamento)}
+                  aoCriarCategoria={criarCategoriaInline}
+                  lancamento={editandoLancamento}
+                  aoAtualizar={atualizarLancamento}
+                  aoCancelar={() => setEditandoLancamento(null)}
+                  menuCategorias={
+                    <BotaoConfiguracao rotulo="Configurar categorias">
+                      <GerenciadorCategorias
+                        categorias={categorias}
+                        somenteLeitura={arquivado}
+                        aoCriar={async (nome, cor) => {
+                          await api.criarCategoria(nome, cor);
+                          await aposMudarCategorias();
+                        }}
+                        aoRenomear={async (id, nome) => {
+                          await api.atualizarCategoria(id, { nome });
+                          await aposMudarCategorias();
+                        }}
+                        aoMudarCor={async (id, cor) => {
+                          await api.atualizarCategoria(id, { cor });
+                          await aposMudarCategorias();
+                        }}
+                        aoExcluir={async (id) => {
+                          await api.excluirCategoria(id);
+                          await aposMudarCategorias();
+                        }}
+                      />
+                    </BotaoConfiguracao>
+                  }
+                  menuFormaPagamento={
+                    <BotaoConfiguracao rotulo="Configurar cores de pagamento">
+                      <CoresPagamento />
+                    </BotaoConfiguracao>
+                  }
                 />
               )}
               <TabelaLancamentos
@@ -394,6 +468,7 @@ export default function App() {
                 lancamentos={lancamentos}
                 contas={contas}
                 somenteLeitura={arquivado}
+                aoEditar={setEditandoLancamento}
                 aoExcluir={acao(api.excluirLancamento)}
               />
             </div>

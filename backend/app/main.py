@@ -24,6 +24,7 @@ from app.routers import (
     gastos_fixos,
     importacao,
     lancamentos,
+    preferencias,
     regras,
     wishlist,
 )
@@ -76,6 +77,7 @@ app.include_router(faturas.router, dependencies=protegido)
 app.include_router(wishlist.router, dependencies=protegido)
 app.include_router(regras.router, dependencies=protegido)
 app.include_router(importacao.router, dependencies=protegido)
+app.include_router(preferencias.router, dependencies=protegido)
 
 
 @app.get("/saude", tags=["infra"], summary="Verificação de saúde")

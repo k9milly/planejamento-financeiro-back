@@ -218,6 +218,12 @@ export interface ResultadoImportacao {
   regras_criadas: number;
 }
 
+/** Cor de exibição de uma forma de pagamento, guardada no servidor. */
+export interface CorPagamento {
+  forma_pagamento: FormaPagamento;
+  cor: string;
+}
+
 /** A fatura em aberto de um cartão em um mês: valor e situação. */
 export interface Fatura {
   cartao_id: number;
