@@ -5,6 +5,8 @@ import type { Categoria, ResumoMes } from '../types/api';
 interface Props {
   mes: ResumoMes;
   categorias: Categoria[];
+  /** No modo painel, quem define a altura é a célula da grade. */
+  preencher?: boolean;
 }
 
 /**
@@ -14,13 +16,13 @@ interface Props {
  * comparar categorias entre si é o que interessa aqui — o percentual sobre o
  * total fica no número ao lado.
  */
-export function GastosPorCategoria({ mes, categorias }: Props) {
+export function GastosPorCategoria({ mes, categorias, preencher }: Props) {
   const gastos = mes.gastos_por_categoria;
   const maior = gastos.length ? Number(gastos[0].total) : 0;
   const corDe = (nome: string) => categorias.find((c) => c.nome === nome)?.cor;
 
   return (
-    <Card titulo="Gastos por categoria">
+    <Card titulo="Gastos por categoria" preencher={preencher}>
       {gastos.length === 0 ? (
         <p className="text-sm text-roxo-300">Nenhuma saída registrada.</p>
       ) : (

@@ -224,6 +224,17 @@ export interface CorPagamento {
   cor: string;
 }
 
+/**
+ * Layout do painel, do jeito que o servidor guarda: uma string opaca.
+ *
+ * `null` quando a usuária nunca arrumou a tela. O formato de dentro é
+ * `ItemLayout[]` serializado — decidido e validado só no frontend, ver
+ * `lib/layoutDashboard.ts`.
+ */
+export interface LayoutDashboard {
+  layout: string | null;
+}
+
 /** A fatura em aberto de um cartão em um mês: valor e situação. */
 export interface Fatura {
   cartao_id: number;
