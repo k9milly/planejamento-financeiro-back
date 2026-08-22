@@ -1,71 +1,78 @@
-# ADR-0007 — Widget é uma casca fina sobre os containers que já existem
+# ADR-0007 — O catálogo de widgets v1 usa só dados que já existem; orçamento/meta, dívidas e investimentos como entidades próprias ficam de fora
 
-**Status:** implementado
+**Status:** proposto
 
 ## Contexto
 
-O painel precisa de blocos para mostrar. A pergunta é de onde eles vêm: se
-são componentes novos, escritos para o painel, ou os mesmos containers que a
-planilha já usa.
+A imagem de referência mostra blocos que se dividem em dois grupos bem
+diferentes:
 
-Escrever componentes novos é tentador — dá liberdade visual. Mas cada
-número duplicado é uma segunda verdade sobre o mesmo dado: o dia em que a
-regra de "quanto falta pagar" mudar, ela precisa mudar em dois lugares, e
-um dos dois vai ficar para trás.
+1. **Blocos que já são um dado que o sistema calcula hoje**, só que
+   mostrado de um jeito novo: saldo, patrimônio, saldo por conta, gastos
+   por categoria, calendário de vencimentos, lista de lançamentos,
+   contas recorrentes.
+2. **Blocos que dependem de um conceito que não existe no modelo de dados
+   atual**: toda tabela da imagem que tem uma coluna "Meta" ou
+   "Orçamento" ao lado de "Real" (Receita, Despesas, Contas Recorrentes,
+   Dívidas, Investimentos) pressupõe que o usuário definiu, com
+   antecedência, quanto **pretendia** gastar/receber em cada categoria —
+   um orçamento. O sistema hoje só sabe o que **de fato** aconteceu
+   (lançamentos). "Dívidas" e "Investimentos" como listas com suas
+   próprias linhas (não só a reserva "guardado" que já existe) também são
+   conceitos que não existem — o mais próximo que há hoje é o `guardado`
+   por conta, que é uma aproximação grosseira de "investimento" e nenhuma
+   de "dívida".
 
 ## Decisão
 
-Um widget é uma **entrada no catálogo** (`components/widgets/catalogo.tsx`):
-um nome para o menu, um tamanho inicial em unidades de grade, e uma função
-que desenha. Quase toda entrada apenas monta um container que a planilha já
-usa, com as mesmas props e os mesmos callbacks de escrita.
+O catálogo de widgets do modo painel (v1) cobre só o primeiro grupo — a
+lista completa, widget a widget, com a origem de cada dado, está na spec
+"Modo painel: alternância, canvas infinito e catálogo de widgets". Onde a imagem
+mostra "Meta"/"Orçamento", o widget correspondente nasce **sem** essa
+coluna (mostra só o valor real), e onde a imagem mostra "Dívidas" ou
+"Investimentos" como tabela detalhada, o widget equivalente vira algo mais
+simples e honesto com o que existe hoje (ex.: total guardado por conta, no
+lugar de uma lista de investimentos com aporte/rendimento individual por
+linha).
 
-Dos onze blocos do catálogo v1, sete são reaproveitamento direto
-(`TotaisMes`, `TotalGuardado`, `GastosPorCategoria`, `CalendarioVencimentos`,
-`GastosFixos`, `Wishlist`, `TabelaLancamentos`) e quatro são novos, porque
-não existiam em lugar nenhum: a rosca de categorias, as despesas diárias, a
-abertura do mês e a fatura do cartão.
+## Por que separar, em vez de desenhar o orçamento/dívidas/investimentos junto
 
-Consequência disso: **os widgets são operáveis**, não só informativos.
-Marcar um gasto fixo como pago funciona dentro do painel, porque é o mesmo
-componente com o mesmo callback. Um painel só de leitura obrigaria a voltar
-para a planilha a cada ação.
-
-### O catálogo é a única lista
-
-O motor de grade, a persistência e o menu "+" leem `CATALOGO` — nenhum deles
-sabe o que existe dentro de um widget. Acrescentar um bloco novo é
-acrescentar uma entrada; o `IdWidget` é derivado das chaves, então um id
-escrito errado no layout padrão não compila.
-
-### O que entra no v1
-
-Entra o que responde a uma pergunta que a usuária já fazia à planilha:
-quanto tenho, quanto guardei, para onde foi, o que vence, quanto devo no
-cartão, o que quero comprar. Fica de fora o que exigiria dado que a API não
-tem (comparação entre meses, projeção) — não porque seja ruim, mas porque
-inventar endpoint para encher o catálogo inverte a ordem certa das coisas.
-
-Widgets calculados no cliente são permitidos quando o dado já está na tela:
-"despesas diárias" deriva dos lançamentos do mês, que a página já buscou, e
-não custa nenhuma chamada nova.
+São duas decisões de produto independentes, mesmo que a imagem as mostre
+juntas: **como a informação é exibida** (o pedido desta rodada) e **que
+informação o sistema rastreia** (uma mudança de domínio, do mesmo porte
+das que motivaram os ADRs 0001–0003 da rodada anterior). Resolver as duas
+de uma vez faria esta rodada de specs crescer para muito além do que foi
+pedido — o usuário pode querer o modo painel e a grade customizável sem
+necessariamente querer redesenhar como o app trata metas, dívidas e
+investimentos, e vice-versa. Manter as duas decisões separadas também
+significa que cada uma pode ser aprovada, implementada e revertida
+independentemente da outra.
 
 ## Consequências
 
-- Os containers reaproveitados ganharam a prop `preencher`, que faz o `Card`
-  ocupar a altura da célula da grade e rolar o excesso. Sem ela, um card
-  curto flutuaria no topo do bloco e um comprido vazaria por baixo.
-- A moldura do bloco no painel **é** o próprio `Card` do container. Os
-  controles de edição (punho de arraste e "✕") são sobrepostos por cima,
-  para que nenhum widget precise saber que existe um modo de edição.
-- Dois widgets mostram gastos por categoria — rosca e lista. Não é
-  duplicação: a rosca responde "que fatia cada categoria levou", a lista
-  responde "quanto foi em reais". A usuária escolhe qual quer, ou os dois.
+- Alguns widgets do v1 são visualmente mais simples que o bloco
+  correspondente na imagem (sem coluna de meta, sem barra de progresso
+  "gasto vs. orçado"). Isso é esperado e documentado na spec, não uma
+  omissão.
+- Se/quando um orçamento por categoria for pedido, ele é um ADR e uma
+  spec à parte (schema novo: algo como `MetaCategoria(categoria_id, ano_id,
+  mes, valor_previsto)`), e os widgets afetados ganham a coluna que falta
+  sem precisar mudar o motor de grade nem o catálogo em si — é uma
+  extensão aditiva do widget, não uma mudança de arquitetura.
+- O mesmo vale para dívidas e investimentos como entidades: quando
+  pedidos, entram como um `TipoConta` novo ou um modelo próprio (a decidir
+  no momento, seguindo o mesmo raciocínio do ADR-0002 da rodada anterior),
+  e ganham widget dedicado depois.
 
 ## Alternativas consideradas
 
-- **Widgets próprios, desenhados do zero.** Rejeitada: duplicaria a lógica
-  de exibição de sete containers e criaria duas verdades para cada número.
-- **Widgets só de leitura**, com as ações restritas à planilha. Rejeitada:
-  faria o painel virar um relatório, e o pedido era ter a tela principal do
-  jeito dela — não um segundo lugar para onde ir só para olhar.
+- **Implementar um orçamento simplificado (um valor fixo por categoria,
+  sem histórico mês a mês) só para preencher as colunas "Meta" da
+  imagem.** Rejeitada: mesmo "simplificado", é modelo de dados novo,
+  migração nova, tela de cadastro nova — o oposto de simplificado do
+  ponto de vista de escopo desta rodada, que é sobre interface.
+- **Não construir os widgets do grupo 2 de jeito nenhum, nem a versão
+  simplificada.** Rejeitada: deixaria o modo painel visivelmente mais
+  pobre que a referência sem necessidade — a versão simplificada (dado
+  real, sem meta) entrega a maior parte do valor visual do pedido sem
+  exigir o domínio novo.

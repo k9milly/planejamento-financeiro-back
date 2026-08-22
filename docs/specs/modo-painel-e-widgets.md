@@ -1,130 +1,290 @@
-# Modo painel e catálogo de widgets
+# Spec — Modo painel: alternância, canvas infinito e catálogo de widgets
 
-Spec da rodada que acrescentou o segundo modo de visualização e os blocos
-ajustáveis. Decisões e seus porquês estão nos ADRs
-[0004](../adr/0004-dois-modos-de-visualizacao.md),
-[0005](../adr/0005-motor-de-grade.md),
-[0006](../adr/0006-persistencia-do-layout.md) e
-[0007](../adr/0007-escopo-do-catalogo-de-widgets.md); aqui está o detalhe do
-que foi construído.
+Cobre a segunda rodada de mudanças pedidas, com a correção feita na
+terceira rodada (canvas infinito no lugar da grade responsiva original —
+ver ADR-0008). As decisões de arquitetura por trás de cada parte estão nos
+ADRs 0004–0008, em `docs/adr/`; este documento é o "o quê".
 
-O que a API expõe está em [`../CONTRATO-API.md`](../CONTRATO-API.md). Esta
-rodada usa dela apenas `GET`/`PUT /preferencias/layout-dashboard`; todo o
-resto reaproveita endpoints que já existiam.
+> **Nota de revisão:** a seção 2 abaixo foi reescrita para refletir o
+> ADR-0008 (canvas infinito, `dnd-kit`) no lugar do ADR-0005 (grade
+> responsiva, `react-grid-layout`), que ela descrevia originalmente. O
+> resto do documento (seções 1 e 3) não mudou.
 
-## 1. Os dois modos
+Terminologia usada pelo usuário, mantida ao longo do documento: **modo
+planilha** (interface atual, inalterada) e **modo painel** (a interface
+nova, no molde da imagem de referência anexada ao pedido).
 
-| | `planilha` | `estatico` (rótulo: **Painel**) |
-| --- | --- | --- |
-| Arranjo | containers fixos | grade de 12 colunas, ajustável |
-| Padrão | sim | — |
-| Onde a escolha mora | `localStorage`, chave `planejamento:modo` | idem |
-| Dados | os mesmos | os mesmos |
-| Escrita | toda | toda |
+---
 
-Alternar preserva ano e mês: os dois vivem em `App.tsx`, acima dos modos.
+## 1. Alternância entre os dois modos
 
-Arquivos:
-
-- `lib/modoVisual.ts` — `useModoVisual()`.
-- `pages/tiposModo.ts` — `PropsModo`, o pacote que os dois modos recebem.
-- `components/Cabecalho.tsx` — barra comum; cada modo passa suas `acoes`.
-- `pages/ModoPlanilha.tsx` — extraído de `App.tsx` sem mudança de
-  comportamento.
-- `pages/ModoEstatico.tsx` — grade, modo de edição e persistência.
-
-## 2. Carregamento e persistência
-
-O layout é um `ItemLayout[]` serializado em JSON:
+### `lib/modoVisual.ts` (novo, no molde de `lib/tema.ts`)
 
 ```ts
-interface ItemLayout {
-  i: IdWidget;  // chave no catálogo
-  x: number; y: number; w: number; h: number;  // unidades de grade
+export type ModoVisual = 'planilha' | 'painel';
+const CHAVE = 'planejamento:modo-visual';
+
+export function useModoVisual() {
+  const [modo, setModo] = useState<ModoVisual>(() => {
+    const salvo = localStorage.getItem(CHAVE);
+    return salvo === 'painel' ? 'painel' : 'planilha';
+  });
+
+  useEffect(() => localStorage.setItem(CHAVE, modo), [modo]);
+
+  return { modo, alternar: () => setModo(m => m === 'planilha' ? 'painel' : 'planilha') };
 }
 ```
 
-Para o servidor isso é **texto opaco** — ele guarda e devolve sem validar
-(ADR-0006). Quem valida é `lib/layoutDashboard.ts::interpretar`, na leitura.
+### `App.tsx`
 
-Ordem de carregamento:
+Reestruturação (sem mudar o que já funciona):
 
-1. `GET /preferencias/layout-dashboard` — a verdade entre aparelhos.
-2. `localStorage`, chave `planejamento:layout-painel` — cobre o intervalo
-   até o servidor responder, e a rede caída.
-3. `LAYOUT_PADRAO` — o padrão de fábrica.
+- Todo o `<div className="min-h-screen ...">` que hoje é o corpo de
+  `App.tsx` (cabeçalho, navegação de meses, grid de containers) migra
+  **sem alterações de comportamento** para `components/ModoPlanilha.tsx`,
+  recebendo por props os dados que `App.tsx` já carrega (`resumo`,
+  `lancamentos`, `contas`, `gastosFixos`, `desejos`, `anoAtual`, `mesAtual`,
+  os `acao(...)` já montados) — uma extração mecânica, não uma reescrita.
+- `App.tsx` passa a decidir entre `<ModoPlanilha ... />` e
+  `<ModoPainel ... />` com base em `useModoVisual()`.
+- O botão de alternância entra no cabeçalho comum aos dois modos — como o
+  cabeçalho hoje só existe dentro do que virou `ModoPlanilha`, um pequeno
+  cabeçalho compartilhado (título do app, seletor de ano, o próprio botão
+  de modo, `BotaoTema`, "Sair") sobe para `App.tsx`, e cada modo desenha
+  só o que é específico dele abaixo (navegação por mês no modo planilha;
+  nada equivalente no modo painel, que mostra o mês corrente inteiro
+  numa tela só, com os próprios controles de período dentro do widget de
+  cabeçalho — ver seção 3).
 
-Quando salva:
+### Critérios de aceite
 
-| Ação | `localStorage` | Servidor |
-| --- | --- | --- |
-| Arrastar / redimensionar | na hora | não |
-| Adicionar / remover bloco | na hora | não |
-| "Salvar layout" | na hora | `PUT` |
-| "Restaurar padrão" | na hora | só ao salvar depois |
+- Usuário que nunca trocou de modo não percebe nenhuma diferença — a tela
+  é pixel-a-pixel a mesma de hoje (modo planilha continua padrão).
+- Alternar de modo preserva o ano/mês selecionado.
+- Recarregar a página mantém o último modo escolhido.
 
-Só o layout da **tela larga** é gravado. O reflow para telas menores é
-derivado, e persistir o derivado apagaria o arranjo de 12 colunas
-(ADR-0005) — por isso o modo de edição também só aparece na tela larga.
+---
 
-## 3. Modo de edição
+## 2. Canvas infinito (só no modo painel)
 
-Ligado pelo botão "Editar layout". Enquanto ativo:
+Ver ADR-0008 para o raciocínio completo. Esta seção é o "o quê" resultante.
 
-- cada bloco ganha uma faixa com o punho de arraste (`.puxador`) e um "✕"
-  para remover;
-- uma barra lista os blocos do catálogo que ainda não estão na tela;
-- "Salvar layout" grava no servidor; "Restaurar padrão" volta ao de fábrica;
-- "Sair da edição" trava a grade de novo.
+### O canvas
 
-Fora da edição a grade não arrasta nem redimensiona — os widgets têm botões
-e formulários dentro, e um arraste acidental sobre eles atrapalharia.
+Uma superfície pannable nas quatro direções, sem tamanho máximo, movida
+por `transform: translate()` (não por scroll nativo — ver ADR-0008 sobre
+por que). Arrastar o fundo (fora de qualquer widget) ou usar a roda do
+mouse/trackpad move o pan. Não há borda, moldura ou container de tamanho
+fixo recortando o conteúdo — a área "existe" onde quer que o usuário tenha
+colocado ou rolado até um widget, e continua existindo além disso sob
+demanda (ver "Extensão sob demanda" abaixo).
 
-## 4. Catálogo v1
+Um fundo com um padrão sutil de grade (linhas finas marcando as células)
+reforça visualmente a metáfora de planilha e ajuda a perceber o
+movimento do pan.
 
-Onze blocos. "Origem" diz se o bloco reaproveita um container da planilha
-(ADR-0007) ou foi escrito para esta rodada.
+### Modo de visualização vs. modo de edição
 
-| Id | Nome no menu | Tamanho inicial | Origem |
+Por padrão, o modo painel abre em **modo de visualização**: os widgets
+não podem ser arrastados nem redimensionados (evita mover um bloco sem
+querer ao rolar/arrastar o fundo para navegar). O pan continua funcionando
+normalmente nos dois modos — só a manipulação dos widgets é que fica
+travada fora do modo de edição. Um botão "Editar layout" entra em **modo
+de edição**, que:
+
+- habilita arrastar (`dnd-kit`) e redimensionar (alça no canto de cada
+  widget) — ver ADR-0008;
+- mostra um botão "+" flutuante que abre o catálogo de widgets
+  disponíveis, para adicionar um que foi removido;
+- mostra um "✕" no canto de cada widget, para removê-lo do layout (não
+  apaga dado nenhum — só tira o widget da tela; pode ser adicionado de
+  volta);
+- mostra os botões "Salvar layout" e "Restaurar padrão" (ver ADR-0006 e
+  "Confirmação de salvamento" abaixo);
+- mostra um botão fixo "Centralizar" (ícone de mira), que reposiciona o
+  pan para enquadrar todos os widgets existentes — sem ele, é fácil rolar
+  demais numa direção e não achar o caminho de volta num canvas sem
+  limite.
+
+Sair do modo de edição (botão "Concluir") volta ao modo de visualização
+travado — o estado de edição em si **não** precisa ser persistido, só o
+layout resultante.
+
+### Schema do layout
+
+```ts
+interface ItemLayout {
+  id: string;          // instância do widget neste canvas — um tipo pode repetir
+  tipo: TipoWidget;     // ver catálogo, seção 3
+  coluna: number; linha: number;              // inteiros, podem ser negativos
+  largura: number; altura: number;            // em número de células
+  config?: Record<string, unknown>; // por widget — ex.: qual conta, no widget "saldo de uma conta"
+}
+type LayoutDashboard = ItemLayout[];
+```
+
+Célula padrão: 240×120px (constante configurável, não exposta ao usuário
+nesta v1). Widgets sempre ocupam um número inteiro de células — arrastar e
+redimensionar fazem *snap* para a grade de células, não para pixels
+livres, reforçando a metáfora de planilha.
+
+### Extensão sob demanda e limite técnico
+
+O app acompanha o retângulo `(colMin, colMax, linMin, linMax)` em uso
+(união dos widgets existentes e de até onde o usuário já rolou). Ao chegar
+perto de uma borda, a extensão disponível cresce mais um tanto — na
+prática, nunca há uma borda alcançável. Internamente, a extensão satura
+numa constante muito grande (sugestão: ±100.000 células) por limitação de
+pixels renderizáveis do navegador, não por design — o usuário nunca chega
+perto disso em uso normal (mesmo limite de natureza que o Google Sheets
+tem e ninguém percebe).
+
+### Virtualização
+
+Só widgets cujo retângulo intersecta a janela de visualização atual (mais
+uma margem) são montados no DOM. Isso é necessário — diferente da grade
+responsiva antiga, que cabia inteira na tela por definição, um canvas
+infinito pode acumular widgets muito além do que está visível a qualquer
+momento.
+
+### Colisão: bloqueada, sem reflow automático
+
+Soltar um widget sobre células já ocupadas por outro é rejeitado — ele
+volta para a última posição válida (pequena animação de retorno). Não há
+reorganização automática dos vizinhos (o "empurrar" que uma grade
+responsiva compacta precisa não se aplica aqui: num canvas infinito, o
+usuário sempre tem espaço livre ao lado).
+
+### Carregamento e persistência (fluxo completo)
+
+1. Ao entrar no modo painel: `GET /preferencias/layout-dashboard`.
+2. Se veio um layout: usa ele (e atualiza o cache local).
+3. Se veio vazio: usa o cache local (`localStorage`), se existir.
+4. Se nenhum dos dois existir: usa o **layout padrão de fábrica** —
+   uma disposição inicial fixa, definida no código, inspirada na imagem
+   de referência (ver seção 3 para o tamanho padrão sugerido de cada
+   widget), posicionada perto da origem `(0, 0)`.
+5. Toda mudança de posição/tamanho, durante o modo de edição, grava
+   imediatamente no `localStorage`.
+6. "Salvar layout" envia o layout atual para
+   `PUT /preferencias/layout-dashboard`.
+7. "Restaurar padrão" apaga a cópia local e a do servidor, recarrega o
+   layout de fábrica, e exige um novo "Salvar layout" para persistir a
+   volta ao padrão (evita apagar sem querer o layout salvo antes de ter
+   certeza).
+
+### Confirmação de salvamento
+
+Clicar em "Salvar layout" mostra uma confirmação (ex.: "Layout salvo",
+num toast/badge pequeno perto do botão) que **desaparece sozinha depois de
+alguns segundos** (sugestão: 3s, via `setTimeout` limpando o estado da
+mensagem — cancelado se o componente desmontar ou se um novo "Salvar" for
+clicado antes de o anterior sumir, para não empilhar timers). A mensagem
+não é um estado permanente da tela — é um retorno pontual daquele clique,
+igual a qualquer confirmação transitória (o mesmo padrão que qualquer
+"salvo com sucesso" de formulário deveria seguir, e que faltou
+especificar na primeira versão desta spec).
+
+### Adicionar/remover widget
+
+O catálogo (botão "+" no modo de edição) lista os tipos disponíveis com
+uma prévia pequena. Adicionar cria um novo `ItemLayout` na primeira célula
+livre a partir da origem, no tamanho padrão daquele tipo. Widgets do mesmo
+tipo podem coexistir (ex.: dois widgets "saldo de uma conta", cada um
+configurado para uma conta diferente, via `config.conta_id`).
+
+### Critérios de aceite
+
+- Rolar/arrastar o fundo do canvas em qualquer direção (inclusive além de
+  onde qualquer widget já esteve) nunca esbarra numa borda visível.
+- Um widget pode ser colocado em coordenadas negativas (acima/à esquerda
+  da origem) sem tratamento especial.
+- Soltar um widget sobre outro já existente não move nenhum dos dois —
+  o widget solto volta para onde estava.
+- Sair da área visível e clicar em "Centralizar" traz todos os widgets de
+  volta à tela.
+- "Layout salvo" desaparece sozinho — nunca fica preso na tela depois de
+  clicar em "Salvar layout" mais de uma vez seguida.
+- Em tela estreita (celular), o modo de edição fica desabilitado — o pan
+  (arrastar o fundo com um dedo) continua funcionando para navegar entre
+  os widgets já posicionados, mas redimensionar por alça e o catálogo de
+  adicionar ficam fora de escopo nesta v1 (ver "fora de escopo").
+
+---
+
+## 3. Catálogo de widgets (v1)
+
+Nome do widget como aparece na imagem de referência → dado de origem →
+tamanho padrão (em células do canvas — ver seção 2) → observação.
+
+| Widget | Dado de origem | Tam. padrão | Observação |
 | --- | --- | --- | --- |
-| `saldo` | Saldo do mês | 4×5 | `TotaisMes` |
-| `patrimonio` | Patrimônio guardado | 4×5 | `TotalGuardado` |
-| `fatura-cartao` | Fatura do cartão | 4×5 | **novo** |
-| `gastos-rosca` | Gastos por categoria (rosca) | 4×6 | **novo** (Recharts) |
-| `gastos-tabela` | Gastos por categoria (lista) | 4×6 | `GastosPorCategoria` |
-| `despesas-diarias` | Despesas diárias | 4×6 | **novo** (Recharts) |
-| `calendario` | Calendário de vencimentos | 6×7 | `CalendarioVencimentos` |
-| `contas-recorrentes` | Contas recorrentes | 6×7 | `GastosFixos` |
-| `saldo-inicial` | Abertura do mês | 4×4 | **novo** |
-| `wishlist` | Wishlist | 4×5 | `Wishlist` |
-| `lancamentos` | Lançamentos do mês | 12×8 | `TabelaLancamentos` |
+| Cabeçalho do período | `anoAtual`/`mesAtual`, já selecionados em `App.tsx` | 12×1 | Sem intervalo de datas livre nesta v1 — mês calendário, como o resto do app. |
+| Saldo atual | `ResumoMesOut.saldo` | 4×2 | Barra de progresso é decorativa (não há "orçamento" para comparar — ver ADR-0007); mostra só o valor. |
+| Todas as contas / saldo total | `ResumoAnoOut.por_conta`, `saldo_final` | 4×2 | Dropdown filtra a lista por conta; reaproveita dado já existente. |
+| Lembrete do dia | Vencimentos de `GastoFixo` no dia de hoje + fatura de cartão vencendo hoje (rodada anterior) | 4×2 | Cálculo client-side sobre dado já carregado — sem endpoint novo. |
+| Receita (cartão) | Soma de `entradas` do `ResumoMesOut` | 3×2 | Sem categoria/meta — ver ADR-0007. |
+| Despesas & contas (cartão) | Soma de `saidas` + gastos fixos pendentes | 3×2 | — |
+| Dívidas (cartão) | — | 3×2 | **Fora de escopo v1** — sem dado de origem; widget nasce oculto do catálogo até existir o domínio (ver ADR-0007). |
+| Investimentos (cartão) | `guardado_no_mes`/`guardado_acumulado` | 3×2 | Aproximação: mostra o "guardado", não uma lista de investimentos por linha. |
+| Patrimônio líquido total | Soma de `saldo + guardado` de todas as contas correntes | 4×4 | Mesmo cálculo que já aparece em `GerenciadorContas`. |
+| Despesas diárias reais | `Lancamento[]` do mês, tipo `saida`, agrupado por dia no cliente | 6×3 | Novo cálculo, sem endpoint novo — os lançamentos do mês já são buscados hoje. |
+| Para onde meu dinheiro vai | `ResumoMesOut.gastos_por_categoria` | 4×4 | Reaproveita exatamente o dado de `GastosPorCategoria.tsx`, só que como rosca em vez de lista. |
+| Detalhamento real das despesas | `ResumoMesOut.gastos_por_categoria` (ou por conta) | 4×4 | Mesma fonte da anterior; visão alternativa (por conta) fica como variação de configuração do widget, não um segundo tipo. |
+| Calendário | `CalendarioVencimentos` (gastos fixos) + vencimento de fatura de cartão (rodada anterior) | 6×5 | Reaproveita o componente já existente, só troca a casca visual (cores do modo painel). |
+| Saldo inicial | `Ano.saldos_iniciais` | 4×3 | Dado já existe, tabela só é lida (edição continua pelo fluxo atual). |
+| Resumo do plano de contas (previsto) | — | — | **Fora de escopo v1** — depende de orçamento (ADR-0007). |
+| Despesas por categoria (tabela) | `ResumoMesOut.gastos_por_categoria` | 6×5 | Mesmo dado do widget "para onde meu dinheiro vai", em formato de tabela; sem coluna de orçamento. |
+| Contas recorrentes | `GastoFixo[]` do mês | 6×5 | Quase 1:1 com `GastosFixos.tsx` — "Real" existe (`valor`), "Orçamento" não (ver ADR-0007); "Pagar?" reaproveita o toggle já existente. |
+| Dívidas (tabela) | — | — | **Fora de escopo v1** (ADR-0007). |
+| Investimentos (tabela) | `guardado` por conta | 6×3 | Versão simplificada: total guardado por conta, sem histórico de aportes individuais. |
+| Lançamentos do mês | `Lancamento[]` do mês | 12×5 | Reaproveita `TabelaLancamentos.tsx` como está. |
+| Wishlist | `Desejo[]` | 4×4 | Reaproveita `Wishlist.tsx` como está. |
+| Fatura de cartão em aberto | `por_cartao` (rodada anterior — saldo inteligente) | 4×3 | Depende da spec "Saldo inteligente" já entregue; ver plano de implementação para a ordem entre as duas rodadas. |
 
-Detalhes dos quatro novos:
+### Visual do modo painel
 
-- **Fatura do cartão** — lê `ResumoMes.por_cartao`, onde `saldo` é a dívida
-  (≤ 0); mostra `-saldo`. Saldo positivo é tratado como crédito a favor, não
-  como fatura negativa. Mostra o dia do vencimento e se já foi paga.
-- **Gastos por categoria (rosca)** — mesma fonte da lista
-  (`gastos_por_categoria`), em rosca. Usa a cor cadastrada de cada
-  categoria, com uma paleta de reserva para as que não têm.
-- **Despesas diárias** — calculado no cliente a partir dos lançamentos que a
-  página já buscou; nenhuma chamada nova. A média divide pelos dias **já
-  decorridos** quando o mês é o corrente: dividir por 30 no dia 5 daria uma
-  média artificialmente baixa.
-- **Abertura do mês** — saldo inicial, saldo atual e a variação entre os
-  dois ("sobrou no mês" / "consumiu do saldo").
+A imagem de referência usa um tema escuro, roxo/violeta de fundo, com
+gradientes rosa/ciano nos cartões de destaque e gráficos de rosca/área
+coloridos — bem diferente da paleta clara "roxo" que o app usa hoje (que
+continua intacta no modo planilha). Recomenda-se, na hora de implementar:
 
-### Fora do v1, de propósito
+- Uma paleta própria do modo painel (não precisa ser idêntica à
+  imagem, mas na mesma família: fundo escuro, cartões com leve gradiente,
+  acentos vibrantes para diferenciar categorias/séries).
+- Usar a skill `dataviz` deste workspace para os gráficos novos (rosca,
+  sparkline de área) — ela já traz uma fórmula de cor validada para
+  série categórica e sequencial, evitando escolher cores ad hoc que não
+  funcionam bem nos dois temas.
+- Biblioteca de gráficos: nenhuma existe hoje no frontend (ver
+  `package.json`). Recharts é a escolha natural — é a mais comum no
+  ecossistema React, cobre rosca/área/linha sem configuração pesada, e
+  compõe bem com os princípios da skill `dataviz` citada acima.
 
-Comparação entre meses e projeção de saldo ficaram de fora: exigiriam dado
-que a API não expõe hoje, e inventar endpoint para encher o catálogo
-inverteria a ordem certa (ADR-0007).
+### Critérios de aceite
 
-## 5. Peso da página
+- Cada widget da tabela acima, quando adicionado ao layout, mostra o dado
+  correto para o mês/ano selecionado em `App.tsx` — sem busca própria de
+  dado.
+- Widgets marcados "fora de escopo v1" não aparecem no catálogo de
+  adicionar — evita a pessoa tentar usar algo que ainda não existe.
+- Nenhum widget novo exige um endpoint novo além dos dois de
+  `preferencias/layout-dashboard` (ADR-0006) — todo o resto reaproveita a
+  API que já existe (incluindo a da rodada anterior, cartão/fatura).
 
-O painel é carregado sob demanda (`React.lazy` em `App.tsx`): traz
-`react-grid-layout` e o Recharts. Quem abre na planilha — o padrão, e o uso
-comum no celular — não baixa nenhum dos dois.
+---
 
-Medido no build: planilha ~78 kB comprimidos, painel +139 kB só quando
-aberto pela primeira vez.
+## Fora de escopo (explicitamente)
+
+- Orçamento/meta por categoria, e toda coluna "Orçamento"/"Restante" que
+  depende dele (ADR-0007).
+- Dívidas e investimentos como entidades com suas próprias linhas
+  (parcela, aporte, rendimento individual).
+- Redimensionar widgets por alça em tela estreita (o pan por toque, sim,
+  funciona — ver critérios de aceite da seção 2).
+- Zoom do canvas (só pan nesta v1 — ver ADR-0008).
+- Intervalo de datas livre no cabeçalho do período (a v1 usa sempre o mês
+  calendário corrente, como o resto do app).
+- Aplicar o mesmo canvas infinito ao modo planilha — o motor (ADR-0008) é
+  o mesmo se isso for pedido depois, mas não é construído nesta rodada.
