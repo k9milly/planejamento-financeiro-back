@@ -264,4 +264,4 @@ Widgets do modo estático que não fazem chamada própria (ex.: "despesas
 diárias reais", calculado no cliente a partir de `GET
 /anos/{ano}/lancamentos` que já existe) não aparecem aqui — não mudam a
 API, só como o frontend usa o que já existe. Ver
-`docs/specs/modo-estatico-e-widgets.md` para a lista completa.
+`docs/specs/modo-painel-e-widgets.md` para a lista completa.
