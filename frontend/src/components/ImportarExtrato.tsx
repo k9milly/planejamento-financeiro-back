@@ -421,7 +421,7 @@ function Linha({
             <option value="">Não informar</option>
             {FORMAS_PAGAMENTO.map((f) => (
               <option key={f} value={f}>
-                {ESTILO_FORMA_PAGAMENTO[f].icone} {ESTILO_FORMA_PAGAMENTO[f].rotulo}
+                {ESTILO_FORMA_PAGAMENTO[f].rotulo}
               </option>
             ))}
           </select>
