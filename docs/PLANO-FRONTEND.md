@@ -6,12 +6,24 @@ Versão do trabalho recortada para uma conversa que só vai mexer em
 schemas.py nem nenhum router pra saber o que construir; o contrato já tem
 tudo isso traduzido.
 
-**Referência de arquitetura:** ADRs `0004`, `0005`, `0007` (dois modos,
-motor de grade, escopo do catálogo de widgets) e a metade frontend do
-`0006` (quando salvar, o que fica local vs. servidor). Specs:
-`docs/specs/modo-painel-e-widgets.md` (completa) e as seções "Telas
-afetadas" de `docs/specs/pagamentos-e-cartoes.md` (1, 2, 3 e 4) — que é
-onde está o detalhe de cada componente a mudar.
+**Referência de arquitetura:** ADRs `0004`, `0008`, `0007` (dois modos,
+canvas infinito, escopo do catálogo de widgets) e a metade frontend do
+`0006` (quando salvar, o que fica local vs. servidor). O `0005` está
+superado pelo `0008` — ver a nota no topo dele; não implemente
+`react-grid-layout`, ele não faz mais parte do plano. Specs:
+`docs/specs/modo-painel-e-widgets.md` (completa — a seção 2 foi
+reescrita para o canvas infinito) e as seções "Telas afetadas" de
+`docs/specs/pagamentos-e-cartoes.md` (1, 2, 3 e 4) — que é onde está o
+detalhe de cada componente a mudar.
+
+> **Atualização desta rodada:** o pedido original de "blocos ajustáveis"
+> foi esclarecido para "canvas infinito, estilo planilha, sem limite de
+> área" — diferente do que as Fases 7 e 8 abaixo descreviam originalmente
+> (uma grade responsiva via `react-grid-layout`). Elas foram reescritas
+> para refletir o ADR-0008. Nenhuma outra fase muda, e nada em
+> `docs/CONTRATO-API.md`/`docs/PLANO-BACKEND.md` muda — a correção é
+> inteiramente frontend (o layout sempre foi uma string opaca do ponto de
+> vista do backend).
 
 ## Como trabalhar sem esperar o backend terminar
 
@@ -46,7 +58,7 @@ dados e a escolha de modo (por enquanto sempre `planilha`).
 
 **Por quê primeiro:** risco baixo, sem dependência de nada do contrato —
 não toca em nenhum endpoint novo. É pré-requisito estrutural de tudo que
-vem depois (tanto o modo estático quanto qualquer tela que precise saber
+vem depois (tanto o modo painel quanto qualquer tela que precise saber
 filtrar conta por tipo).
 
 **Depende de:** nada (não depende do backend estar pronto).
@@ -138,9 +150,9 @@ pagadora e a fatura em aberto do cartão imediatamente após recarregar.
 
 ---
 
-## Fase 6 — Alternância de modo + `ModoEstatico` vazio
+## Fase 6 — Alternância de modo + `ModoPainel` vazio
 
-**O quê:** `useModoVisual`, botão no cabeçalho, `ModoEstatico.tsx` como
+**O quê:** `useModoVisual`, botão no cabeçalho, `ModoPainel.tsx` como
 placeholder.
 
 **Por quê só agora:** tecnicamente independente das Fases 2–5 (poderia vir
@@ -158,21 +170,27 @@ selecionado e persiste a escolha ao recarregar.
 
 ---
 
-## Fase 7 — Motor de grade, sem persistência
+## Fase 7 — Canvas infinito, sem persistência
 
-**O quê:** `react-grid-layout` integrado dentro de `ModoEstatico`, layout
-fixo de widgets fictícios só para validar arrastar/redimensionar/reflow
-responsivo. Sem "Salvar layout", sem chamar o backend.
+**O quê:** o canvas pannable dentro de `ModoPainel` (ver ADR-0008 e a
+spec, seção 2): superfície movida por `transform`, grade de fundo,
+`dnd-kit` para arrastar, alça própria para redimensionar, snap em
+células, extensão sob demanda das bordas, virtualização (só monta widgets
+visíveis), botão "Centralizar". Layout fixo de widgets fictícios só para
+validar o comportamento — sem "Salvar layout", sem chamar o backend.
 
-**Por quê separado da persistência:** isola o risco técnico da dependência
-nova do risco de integração com a API — não depende do contrato de
-`/preferencias/layout-dashboard` estar implementado de verdade no
-servidor.
+**Por quê separado da persistência:** isola o risco técnico do canvas
+(pan, extensão sob demanda, virtualização — a parte tecnicamente mais
+arriscada desta rodada) do risco de integração com a API — não depende do
+contrato de `/preferencias/layout-dashboard` estar implementado de
+verdade no servidor.
 
 **Depende de:** Fase 6.
 
-**Critério de saída:** arrastar/redimensionar funciona sem sobreposição;
-reflui corretamente em tela menor.
+**Critério de saída:** arrastar o fundo em qualquer direção nunca esbarra
+numa borda visível, inclusive para coordenadas negativas; soltar um
+widget sobre outro é rejeitado (volta pra posição anterior); "Centralizar"
+reenquadra os widgets de teste.
 
 ---
 
@@ -180,19 +198,26 @@ reflui corretamente em tela menor.
 
 **O quê:** modo de edição completo ("Editar layout", "+" de adicionar,
 "✕" de remover, "Salvar layout", "Restaurar padrão"), fluxo de
-carregamento (servidor → local → padrão de fábrica), chamadas a
-`GET`/`PUT /preferencias/layout-dashboard`.
+carregamento (servidor → local → padrão de fábrica, posicionado perto da
+origem), chamadas a `GET`/`PUT /preferencias/layout-dashboard`. Inclui a
+confirmação transitória de "Layout salvo" (some sozinha depois de alguns
+segundos — ver spec, seção 2, "Confirmação de salvamento": é uma correção
+explícita desta rodada a um comportamento que, na primeira versão desta
+spec, ficava preso na tela).
 
-**Por quê depois do motor puro:** o schema do `ItemLayout` só é desenhado
-com confiança depois de ver o `react-grid-layout` funcionando de verdade
-(Fase 7). Pode usar dados falsos para os dois endpoints (ver seção "Como
-trabalhar sem esperar o backend") se o backend ainda não os tiver
-implementado.
+**Por quê depois do canvas puro:** o schema do `ItemLayout`
+(`coluna`/`linha` com sinal, `largura`/`altura` em células) só é desenhado
+com confiança depois de ver o canvas funcionando de verdade (Fase 7). Pode
+usar dados falsos para os dois endpoints (ver seção "Como trabalhar sem
+esperar o backend") se o backend ainda não os tiver implementado.
 
 **Depende de:** Fase 7. Do contrato: `GET`/`PUT /preferencias/layout-dashboard`.
 
-**Critério de saída:** um layout arrastado sobrevive a um F5; "Salvar
-layout" grava no servidor (real ou falso); "Restaurar padrão" funciona.
+**Critério de saída:** um layout arrastado (incluindo widgets em
+coordenadas negativas) sobrevive a um F5; "Salvar layout" grava no
+servidor (real ou falso) e a confirmação desaparece sozinha; "Restaurar
+padrão" funciona; clicar "Salvar" várias vezes seguidas nunca deixa duas
+confirmações empilhadas nem uma presa na tela.
 
 ---
 
@@ -221,7 +246,7 @@ v1 com dado real e correto para o mês selecionado.
 ## Fase 10 — Widgets de fatura de cartão
 
 **O quê:** widget "fatura de cartão em aberto" e o marcador de fatura
-dentro do widget de calendário do modo estático.
+dentro do widget de calendário do modo painel.
 
 **Por quê por último:** depende de `por_cartao` e dos endpoints de fatura
 (Fase 5) já estarem integrados na interface — é literalmente reaproveitar

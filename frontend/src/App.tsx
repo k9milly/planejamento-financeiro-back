@@ -8,12 +8,12 @@ import { ModoPlanilha } from './pages/ModoPlanilha';
 import type { PropsModo } from './pages/tiposModo';
 
 /**
- * O painel entra sob demanda: ele carrega `react-grid-layout` e o Recharts,
+ * O painel entra sob demanda: ele carrega `@dnd-kit/core` e o Recharts,
  * que juntos pesam mais que todo o resto do app. Quem abre na planilha — o
  * caso comum, e no celular, em rede móvel — não deve pagar por eles.
  */
-const ModoEstatico = lazy(() =>
-  import('./pages/ModoEstatico').then((m) => ({ default: m.ModoEstatico })),
+const ModoPainel = lazy(() =>
+  import('./pages/ModoPainel').then((m) => ({ default: m.ModoPainel })),
 );
 import type {
   Ano,
@@ -267,9 +267,9 @@ export default function App() {
     },
   };
 
-  return modo === 'estatico' ? (
+  return modo === 'painel' ? (
     <Suspense fallback={<Aviso texto="Carregando painel…" />}>
-      <ModoEstatico {...propsModo} />
+      <ModoPainel {...propsModo} />
     </Suspense>
   ) : (
     <ModoPlanilha {...propsModo} />

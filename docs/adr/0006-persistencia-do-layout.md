@@ -1,72 +1,99 @@
-# ADR-0006 — Layout do painel é preferência por usuário, guardada como texto opaco
+# ADR-0006 — O layout customizado é salvo em dois lugares: local, na hora, e no servidor, sob ação explícita
 
-**Status:** implementado
+**Status:** proposto
 
 ## Contexto
 
-O arranjo de blocos do painel (ADR-0004, ADR-0005) é trabalho que a usuária
-teve: mover, redimensionar, escolher o que aparece. Precisa sobreviver a um
-F5, e ela espera reencontrá-lo no outro aparelho.
+Depois do ADR-0005, arrastar e redimensionar um widget já funciona na
+tela — mas some ao recarregar a página se nada for guardado. É preciso
+decidir **onde** esse arranjo fica: só no navegador (como o tema, ver
+ADR-0004) ou também no servidor.
 
-Duas perguntas: **onde** guardar, e **quem entende** o formato.
+Diferente da preferência de modo (um clique para reconstituir) ou do tema
+(idem), um layout customizado pode representar vários minutos de trabalho
+manual — mover e redimensionar cada bloco até ficar do jeito que a pessoa
+quer. Perder isso ao limpar os dados do navegador, trocar de aparelho ou
+usar uma aba anônima é um custo bem maior do que perder a escolha de tema
+claro/escuro.
 
 ## Decisão
 
-### Onde: no servidor, por usuário — com cópia local
+**Local, imediato:** cada solta de arrasto ou redimensionamento grava o
+layout inteiro no `localStorage` (chave `planejamento:layout-dashboard`),
+na hora — sem round-trip de rede. É o que faz a interação parecer
+instantânea e sobreviver a um F5 mesmo sem internet.
 
-Coluna `usuarios.layout_dashboard` (texto, nullable) e dois endpoints,
-`GET`/`PUT /preferencias/layout-dashboard`.
+**Servidor, sob ação explícita:** um botão "Salvar layout" (visível só no
+modo de edição — ver spec) envia o layout atual para o backend. Novo campo
+`layout_dashboard: Mapped[str | None]` (JSON serializado como texto) em
+`Usuario`, e dois endpoints:
 
-**Por usuário**, e não global: a disposição da tela é de quem a arrumou.
-Isso o diferencia das cores da forma de pagamento, que são globais porque
-são um vocabulário do app inteiro, não uma escolha de arrumação.
+- `GET /preferencias/layout-dashboard` — devolve o layout salvo, ou `null`
+  se o usuário nunca salvou um.
+- `PUT /preferencias/layout-dashboard` — substitui o layout salvo.
 
-O `PUT` responde com o valor salvo em vez de `204`: mantém o mesmo formato
-do `GET`, então o frontend usa a resposta direto como novo estado, sem uma
-segunda chamada para reler.
+Registrados como os demais routers, em `main.py` — herdam a exigência de
+sessão automaticamente (mesma dependência aplicada a todas as rotas, ver
+`docs/ARQUITETURA.md`, "Como funciona a autenticação").
 
-Há também uma **cópia em `localStorage`**, gravada a cada mudança. Ela não
-substitui o servidor — serve para a tela abrir já arrumada sem esperar a
-resposta da rede, e para o arranjo não se perder se o `PUT` falhar. A ordem
-de carregamento é **servidor → cópia local → padrão de fábrica**.
+Ao abrir o modo painel: se existir layout no servidor, ele é a fonte da
+verdade e sobrescreve o que está no `localStorage` daquele navegador
+(cobre o caso de ter customizado em outro aparelho); se não existir nem no
+servidor nem no local, usa o layout padrão de fábrica.
 
-### Quem entende o formato: só o frontend
+## Por que não salvar no servidor a cada arrasto
 
-O campo `layout` é uma **string opaca** para o backend: ele guarda e devolve
-sem olhar dentro. Validar o JSON no servidor obrigaria a mexer no backend a
-cada bloco novo da interface — o formato é uma decisão de quem desenha a
-tela, não do domínio financeiro.
+Um layout com 10 widgets sendo redimensionado gera dezenas de eventos de
+mudança por segundo enquanto a pessoa está ajustando. Mandar uma
+requisição HTTP a cada um deles seria, na prática, uma escrita contínua no
+banco por causa de um gesto de mouse — sem nenhum ganho real, e com risco
+de corrida entre abas (duas abas abertas, a última resposta a chegar
+"vence", mesmo que não seja a mais recente da tela). O resto do app já
+segue o padrão de "escrita é uma ação explícita, depois recarrega" (o
+wrapper `acao()` em `App.tsx`) — o botão "Salvar layout" é a mesma ideia
+aplicada aqui.
 
-A contrapartida é que **quem valida é o frontend, na leitura**
-(`lib/layoutDashboard.ts::interpretar`): um JSON corrompido, de uma versão
-antiga, ou citando um widget que não existe mais não pode derrubar a tela.
-Item inválido é descartado; se sobrar nenhum, cai no padrão de fábrica.
+## Por que não só `localStorage`
 
-### Quando salvar
-
-Explicitamente, no botão "Salvar layout" — não a cada arraste. Salvar
-sozinho encheria o servidor de escritas durante o ajuste e tiraria da
-usuária a chance de experimentar e desistir. A cópia local, essa sim, é
-gravada na hora: é barata e local.
-
-"Restaurar padrão" volta ao layout de fábrica na tela e localmente, mas só
-chega ao servidor quando ela salvar — pelo mesmo motivo.
+O tema é reconstituído em um clique; um layout arrastado não. Perder um
+layout customizado ao limpar os dados do navegador ou ao abrir o app em
+outro computador é o tipo de frustração que desincentiva a pessoa a usar a
+funcionalidade — o pedido do usuário foi explicitamente "deixar
+totalmente customizável", o que implica que esse trabalho tem valor e
+deveria durar. O custo de guardar (uma coluna de texto e dois endpoints
+pequenos) é baixo perto disso.
 
 ## Consequências
 
-- O backend não tem teste sobre o *conteúdo* do layout, só sobre guardar e
-  devolver a string e sobre um usuário não ver o layout do outro.
-- Widget removido do catálogo numa versão futura não quebra quem já tinha
-  ele salvo: o item some do layout na primeira leitura, o resto sobrevive.
-- Um layout salvo com todos os blocos removidos é lido como "nada salvo" e
-  cai no padrão — mostrar uma tela vazia seria pior que mostrar o padrão.
+- O `localStorage` vira um **cache local** do último estado, não a fonte
+  de verdade — o servidor é. Isso evita duas fontes de verdade divergentes
+  de forma permanente (o local é sempre reconciliado contra o servidor no
+  carregamento).
+- Precisa de uma migração Alembic (aditiva, coluna nullable) — mesma
+  disciplina já estabelecida no projeto (ADR-0001 a 0003 da rodada
+  anterior seguem o mesmo princípio).
+- `layout_dashboard` guarda um JSON livre (lista de widgets + posição +
+  tamanho + tipo). Não é validado item a item pelo Pydantic além de "é uma
+  string" — o formato interno é responsabilidade do frontend, o backend só
+  guarda e devolve. Isso é uma escolha deliberada de simplicidade: o
+  schema de widgets muda mais rápido que o backend deveria precisar
+  acompanhar (ex.: adicionar um tipo de widget novo não deveria exigir
+  migração de banco).
+- "Restaurar layout padrão" limpa as duas cópias (local e servidor) e
+  recarrega o layout de fábrica.
 
 ## Alternativas consideradas
 
-- **Só `localStorage`, sem servidor.** Rejeitada: perderia o arranjo ao
-  trocar de aparelho ou limpar o navegador, e o pedido era justamente ter a
-  tela do jeito dela.
-- **Schema validado no backend** (tabela de blocos, com FK). Rejeitada:
-  amarraria o servidor ao catálogo de widgets, fazendo toda mudança visual
-  virar migração de banco.
-- **Salvar a cada arraste.** Rejeitada: escritas demais e sem volta.
+- **Só `localStorage`, sem backend.** Mais simples, zero mudança de
+  schema — mas descarta o trabalho do usuário ao trocar de navegador ou
+  limpar dados, o que contradiz o espírito de "customizável" do pedido.
+  Rejeitada, mas registrada como a opção a cair de volta se, na prática,
+  o usuário preferir simplicidade a durabilidade (é uma troca pequena de
+  reverter).
+- **Sincronização em tempo real (salvar a cada mudança, com debounce).**
+  Mais "mágico", mas adiciona complexidade (debounce, cancelamento de
+  requisição em voo, indicador de "salvando…") para resolver um problema —
+  perder uma edição em andamento — que a cópia local já resolve sozinha
+  entre um F5 e o próximo clique em "Salvar". Rejeitada por não valer o
+  custo agora; pode ser revisitada se "esquecer de salvar" se mostrar um
+  problema real de uso.
