@@ -1,8 +1,14 @@
-"""Preferências de exibição globais (cores da forma de pagamento).
+"""Preferências de exibição. Nenhuma pertence a um ano.
 
-Não têm dono nem ano: as quatro formas de pagamento são fixas para o app
-inteiro, e a cor escolhida vale em qualquer aparelho — ver `CorFormaPagamento`
-em `app/models.py`.
+Duas coisas diferentes moram aqui, com donos diferentes de propósito:
+
+- **cores da forma de pagamento**: globais. As quatro formas são fixas para o
+  app inteiro, e a cor escolhida vale em qualquer aparelho.
+- **layout do painel**: por usuário. A disposição da tela é de quem a arrumou.
+
+Ambas ficam no banco — e não no navegador — porque o app é usado tanto no
+celular quanto no PC, e uma preferência salva só em `localStorage` não
+apareceria igual nos dois.
 """
 
 from __future__ import annotations
@@ -11,8 +17,14 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models import CorFormaPagamento, FormaPagamento
-from app.schemas import CorFormaPagamentoDefinir, CorFormaPagamentoOut
+from app.deps import usuario_atual
+from app.models import CorFormaPagamento, FormaPagamento, Usuario
+from app.schemas import (
+    CorFormaPagamentoDefinir,
+    CorFormaPagamentoOut,
+    LayoutDashboardDefinir,
+    LayoutDashboardOut,
+)
 
 router = APIRouter(prefix="/preferencias", tags=["preferencias"])
 
@@ -57,3 +69,35 @@ def definir(
     db.commit()
     db.refresh(registro)
     return registro
+
+
+@router.get(
+    "/layout-dashboard",
+    response_model=LayoutDashboardOut,
+    summary="Layout do painel salvo por este usuário",
+)
+def obter_layout(usuario: Usuario = Depends(usuario_atual)) -> LayoutDashboardOut:
+    """`layout` vem `null` enquanto o usuário nunca tiver arrumado o painel —
+    é o sinal para o frontend usar a disposição padrão dele."""
+    return LayoutDashboardOut(layout=usuario.layout_dashboard)
+
+
+@router.put(
+    "/layout-dashboard",
+    response_model=LayoutDashboardOut,
+    summary="Salva o layout do painel deste usuário",
+)
+def definir_layout(
+    dados: LayoutDashboardDefinir,
+    usuario: Usuario = Depends(usuario_atual),
+    db: Session = Depends(get_db),
+) -> LayoutDashboardOut:
+    """Responde com o que ficou salvo, em vez de `204`.
+
+    O contrato deixava a escolha em aberto; devolver o valor mantém o mesmo
+    formato do `GET`, então o frontend pode usar a resposta do `PUT`
+    diretamente como novo estado, sem uma segunda chamada para reler.
+    """
+    usuario.layout_dashboard = dados.layout
+    db.commit()
+    return LayoutDashboardOut(layout=usuario.layout_dashboard)
