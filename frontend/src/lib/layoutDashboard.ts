@@ -11,25 +11,37 @@
 
 import { ID_WIDGETS, TAMANHO_PADRAO, type TipoWidget } from '../components/widgets/catalogo';
 
-/** Tamanho de uma célula do canvas, em pixels (ADR-0008). */
+/** Tamanho de uma célula do canvas em pixels, no zoom 100% (ADR-0008/0009). */
 export const CELL_W = 240;
 export const CELL_H = 120;
 
 /**
- * Limite técnico honesto (ADR-0008): não é um limite de produto, é o teto
- * real de pixels que alguns motores de navegador conseguem posicionar. O
- * usuário nunca chega perto — é o mesmo tipo de limite que o Google Sheets
- * tem (10 milhões de células) sem que ninguém perceba como "não infinito".
+ * O canvas usa rolagem nativa do navegador (ADR-0009), não pan por
+ * `transform` — a usuária pediu barra de scroll e zoom, no molde do Google
+ * Sheets, e rolagem nativa dá as duas coisas de graça (a barra em si, e o
+ * `scrollLeft`/`scrollTop` como base para o zoom). Isso troca a moldura
+ * "sem borda nenhuma" do ADR-0008 por uma área grande, porém finita — mais
+ * honesto, e mais fácil de se situar dentro dela do que um pan sem
+ * referência nenhuma de posição.
  *
- * Implementação simplificada em relação à letra do ADR: em vez de rastrear
- * um retângulo `(colMin, colMax, linMin, linMax)` que cresce sob demanda
- * conforme o pan se aproxima da borda, o pan é livre dentro deste limite
- * fixo desde o início. O resultado observável é idêntico — "rolar em
- * qualquer direção nunca esbarra numa borda visível" —, porque o limite é
- * grande demais para ser alcançável, e o código fica bem mais simples sem
- * o rastreamento incremental.
+ * `ORIGEM_*` é quantas células ficam reservadas *antes* de (0,0) — é o que
+ * permite `coluna`/`linha` negativos (um widget arrastado acima ou à
+ * esquerda da origem) sem que a área de rolagem precise "crescer para
+ * trás" (a mesma armadilha de scroll nativo que o ADR-0008 apontava:
+ * `scrollLeft`/`scrollTop` não vão a negativo). `TOTAL_*` é o tamanho
+ * inteiro da área rolável. Os números são generosos (48.000×48.000px no
+ * zoom 100%) — não é "infinito" de verdade, mas nenhum uso real chega
+ * perto da borda, no mesmo espírito do limite técnico que o Google Sheets
+ * também tem (10 milhões de células) sem que ninguém perceba.
  */
-export const LIMITE_PX = 24_000_000;
+export const ORIGEM_COL = 40;
+export const ORIGEM_LIN = 40;
+export const TOTAL_COLS = 200;
+export const TOTAL_ROWS = 400;
+
+/** Zoom em degraus, como o controle do Google Sheets — não contínuo, para o "encaixe" de célula ficar previsível. */
+export const NIVEIS_ZOOM = [0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2] as const;
+export const ZOOM_PADRAO = 1;
 
 /** Posição e tamanho de um widget, em unidades de célula (podem ser negativas). */
 export interface ItemLayout {
@@ -166,10 +178,11 @@ function idNovo(): string {
  */
 export function adicionar(layout: ItemLayout[], tipo: TipoWidget): ItemLayout[] {
   const { w: largura, h: altura } = TAMANHO_PADRAO[tipo];
-  const LIMITE_BUSCA = 300;
+  const LIMITE_LINHA = TOTAL_ROWS - ORIGEM_LIN - altura;
+  const LIMITE_COLUNA = TOTAL_COLS - ORIGEM_COL - largura;
 
-  for (let linha = 0; linha < LIMITE_BUSCA; linha++) {
-    for (let coluna = 0; coluna < LIMITE_BUSCA; coluna++) {
+  for (let linha = 0; linha < LIMITE_LINHA; linha++) {
+    for (let coluna = 0; coluna < LIMITE_COLUNA; coluna++) {
       const candidato = { coluna, linha, largura, altura };
       if (!colide(layout, candidato, '')) {
         return [...layout, { id: idNovo(), tipo, ...candidato }];
@@ -194,13 +207,33 @@ export function atualizarConfig(
   return layout.map((item) => (item.id === id ? { ...item, config } : item));
 }
 
-/** Retângulo em pixels do canvas (antes do pan), para posicionar e para colisão de arrasto. */
+/**
+ * Retângulo em pixels **dentro da área de rolagem** (zoom 100%, já somando
+ * `ORIGEM_COL`/`ORIGEM_LIN`) — pronto para usar como `left`/`top`/`width`/
+ * `height` do widget. Multiplicar por um zoom diferente de 1 é
+ * responsabilidade de quem desenha (o wrapper inteiro escala via CSS
+ * `transform: scale()`, não célula por célula).
+ */
 export function retanguloPx(item: ItemLayout) {
   return {
-    left: item.coluna * CELL_W,
-    top: item.linha * CELL_H,
+    left: (item.coluna + ORIGEM_COL) * CELL_W,
+    top: (item.linha + ORIGEM_LIN) * CELL_H,
     width: item.largura * CELL_W,
     height: item.altura * CELL_H,
+  };
+}
+
+/** Limita coluna/linha para o widget não ser arrastado/redimensionado para fora da área rolável. */
+export function limitarRetangulo(r: {
+  coluna: number;
+  linha: number;
+  largura: number;
+  altura: number;
+}) {
+  return {
+    ...r,
+    coluna: Math.max(-ORIGEM_COL, Math.min(r.coluna, TOTAL_COLS - ORIGEM_COL - r.largura)),
+    linha: Math.max(-ORIGEM_LIN, Math.min(r.linha, TOTAL_ROWS - ORIGEM_LIN - r.altura)),
   };
 }
 

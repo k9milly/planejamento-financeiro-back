@@ -164,21 +164,25 @@ implementação por fases está em `docs/PLANO-IMPLEMENTACAO.md`.
 ### Dois modos de visualização, e o canvas infinito do painel
 
 A mesma página de mês tem duas formas: a **planilha** (containers fixos, o
-padrão) e o **painel** (canvas pannable nas quatro direções, onde a usuária
-arrasta, redimensiona, adiciona e remove widgets). Os dois recebem o mesmo
-pacote de props e operam sobre os mesmos dados — só muda o arranjo.
+padrão) e o **painel** (uma área grande — não infinita de verdade — com
+rolagem nativa e zoom em degraus, onde a usuária arrasta, redimensiona,
+adiciona e remove widgets). Os dois recebem o mesmo pacote de props e
+operam sobre os mesmos dados — só muda o arranjo.
 
 O painel **não** é uma grade responsiva de largura fixa (isso foi tentado
 primeiro com `react-grid-layout` — ADR-0005 — e substituído pelo ADR-0008
-quando o pedido foi esclarecido para "canvas infinito, estilo planilha"): é
-uma superfície movida por `transform`, com coordenadas de célula que podem
-ser negativas, `dnd-kit` para arrastar e colisão que **bloqueia** em vez de
-reorganizar os vizinhos. O arranjo é guardado como texto opaco em
+quando o pedido foi esclarecido para "canvas infinito, estilo planilha"; o
+ADR-0008 por sua vez foi refinado pelo ADR-0009, trocando o pan por
+`transform` por rolagem nativa do navegador com zoom, no molde do Google
+Sheets): é uma área com `overflow: auto`, coordenadas de célula que podem
+ser negativas (via um deslocamento de origem, para não depender de
+`scrollLeft` negativo), `dnd-kit` para arrastar e colisão que **bloqueia**
+em vez de reorganizar os vizinhos. O arranjo é guardado como texto opaco em
 `usuarios.layout_dashboard`, validado só no frontend. O painel é carregado sob
 demanda, porque traz as duas dependências mais pesadas do projeto (`dnd-kit`
 e Recharts) e o uso comum, no celular, é a planilha.
 
-Detalhe nos ADRs 0004, 0006–0008 e na spec `docs/specs/modo-painel-e-widgets.md`.
+Detalhe nos ADRs 0004, 0006–0009 e na spec `docs/specs/modo-painel-e-widgets.md`.
 
 ### Como funciona a autenticação
 
