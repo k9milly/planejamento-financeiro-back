@@ -161,18 +161,24 @@ pagamento da fatura. O detalhe completo está nos ADRs 0001–0003, em
 `docs/adr/`, e na spec em `docs/specs/pagamentos-e-cartoes.md`; o plano de
 implementação por fases está em `docs/PLANO-IMPLEMENTACAO.md`.
 
-### Dois modos de visualização, e o painel ajustável
+### Dois modos de visualização, e o canvas infinito do painel
 
 A mesma página de mês tem duas formas: a **planilha** (containers fixos, o
-padrão) e o **painel** (grade de blocos que a usuária arruma). Os dois recebem
-o mesmo pacote de props e operam sobre os mesmos dados — só muda o arranjo.
+padrão) e o **painel** (canvas pannable nas quatro direções, onde a usuária
+arrasta, redimensiona, adiciona e remove widgets). Os dois recebem o mesmo
+pacote de props e operam sobre os mesmos dados — só muda o arranjo.
 
-A grade usa `react-grid-layout`; o arranjo é guardado como texto opaco em
+O painel **não** é uma grade responsiva de largura fixa (isso foi tentado
+primeiro com `react-grid-layout` — ADR-0005 — e substituído pelo ADR-0008
+quando o pedido foi esclarecido para "canvas infinito, estilo planilha"): é
+uma superfície movida por `transform`, com coordenadas de célula que podem
+ser negativas, `dnd-kit` para arrastar e colisão que **bloqueia** em vez de
+reorganizar os vizinhos. O arranjo é guardado como texto opaco em
 `usuarios.layout_dashboard`, validado só no frontend. O painel é carregado sob
-demanda, porque traz as duas dependências mais pesadas do projeto
-(`react-grid-layout` e Recharts) e o uso comum, no celular, é a planilha.
+demanda, porque traz as duas dependências mais pesadas do projeto (`dnd-kit`
+e Recharts) e o uso comum, no celular, é a planilha.
 
-Detalhe nos ADRs 0004–0007 e na spec `docs/specs/modo-painel-e-widgets.md`.
+Detalhe nos ADRs 0004, 0006–0008 e na spec `docs/specs/modo-painel-e-widgets.md`.
 
 ### Como funciona a autenticação
 
