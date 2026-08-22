@@ -129,7 +129,25 @@ Um cartão exige `dia_vencimento_fatura` (1–31); uma conta corrente não aceit
 | `POST` | `.../fatura/{mes}/desfazer` | Remove a transferência gerada, volta a pendente |
 
 Sem `conta_pagamento_id` no corpo, usa `conta_pagamento_padrao_id` do cartão;
-sem nenhum dos dois, `pagar` devolve 422.
+sem nenhum dos dois, `pagar` devolve 422. O `GET` traz também
+`dia_vencimento`, espelhando o do cartão, para o calendário não precisar
+cruzar a resposta com a lista de contas.
+
+## Preferências
+
+Nem por ano, nem financeiras: só mudam como a interface aparece. Ficam no
+servidor — e não no navegador — para valerem igual no celular e no PC.
+
+| Método | Rota | Descrição |
+| --- | --- | --- |
+| `GET` | `/preferencias/cores-forma-pagamento` | Cor de cada forma de pagamento (as não personalizadas vêm com o padrão) |
+| `PUT` | `/preferencias/cores-forma-pagamento/{forma}` | `{ "cor": "#22c55e" }` |
+| `GET` | `/preferencias/layout-dashboard` | `{ "layout": string \| null }`; `null` = nunca arrumou o painel |
+| `PUT` | `/preferencias/layout-dashboard` | `{ "layout": string }`; responde com o que ficou salvo |
+
+As cores são **globais** (as quatro formas de pagamento são fixas para o app
+inteiro); o layout é **por usuário**. `layout` é texto opaco: JSON gerado e
+lido só pelo frontend, que o backend guarda sem validar o conteúdo.
 
 ## Categorias
 

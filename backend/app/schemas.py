@@ -125,7 +125,7 @@ class CategoriaOut(_Base):
 
 
 # --------------------------------------------------------------------------- #
-# Preferências (cores da forma de pagamento)
+# Preferências (cores da forma de pagamento, layout do painel)
 # --------------------------------------------------------------------------- #
 class CorFormaPagamentoDefinir(BaseModel):
     cor: str = Field(pattern=r"^#[0-9a-fA-F]{6}$")
@@ -134,6 +134,19 @@ class CorFormaPagamentoDefinir(BaseModel):
 class CorFormaPagamentoOut(_Base):
     forma_pagamento: FormaPagamento
     cor: str
+
+
+class LayoutDashboardDefinir(BaseModel):
+    """`layout` é uma string opaca: JSON serializado pelo frontend.
+
+    O backend não valida o conteúdo de propósito — ver `Usuario.layout_dashboard`.
+    """
+
+    layout: str
+
+
+class LayoutDashboardOut(BaseModel):
+    layout: str | None
 
 
 # --------------------------------------------------------------------------- #
@@ -431,6 +444,9 @@ class FaturaOut(BaseModel):
     valor_em_aberto: Decimal
     situacao: SituacaoGastoFixo
     lancamento_id: int | None
+    # Espelha `Conta.dia_vencimento_fatura`. Vem junto para o calendário de
+    # vencimentos não precisar cruzar esta resposta com a lista de contas.
+    dia_vencimento: int
 
 
 # --------------------------------------------------------------------------- #
