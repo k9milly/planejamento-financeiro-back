@@ -1,24 +1,20 @@
-import { useCallback, useEffect, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useState } from 'react';
 import { api } from './lib/api';
-import { NOMES_MESES } from './lib/formato';
+import { useModoVisual } from './lib/modoVisual';
 import { useTema } from './lib/tema';
-import { BotaoConfiguracao } from './components/BotaoConfiguracao';
-import { BotaoTema } from './components/BotaoTema';
-import { CalendarioVencimentos } from './components/CalendarioVencimentos';
-import { CoresPagamento } from './components/CoresPagamento';
-import { FormularioLancamento } from './components/FormularioLancamento';
-import { GastosFixos } from './components/GastosFixos';
-import { GastosPorCategoria } from './components/GastosPorCategoria';
-import { GerenciadorAnos } from './components/GerenciadorAnos';
-import { GerenciadorCategorias } from './components/GerenciadorCategorias';
-import { GerenciadorContas } from './components/GerenciadorContas';
-import { ImportarExtrato } from './components/ImportarExtrato';
 import { Login } from './components/Login';
 import { sessao } from './lib/sessao';
-import { TabelaLancamentos } from './components/TabelaLancamentos';
-import { TotaisMes } from './components/TotaisMes';
-import { TotalGuardado } from './components/TotalGuardado';
-import { Wishlist } from './components/Wishlist';
+import { ModoPlanilha } from './pages/ModoPlanilha';
+import type { PropsModo } from './pages/tiposModo';
+
+/**
+ * O painel entra sob demanda: ele carrega `react-grid-layout` e o Recharts,
+ * que juntos pesam mais que todo o resto do app. Quem abre na planilha — o
+ * caso comum, e no celular, em rede móvel — não deve pagar por eles.
+ */
+const ModoEstatico = lazy(() =>
+  import('./pages/ModoEstatico').then((m) => ({ default: m.ModoEstatico })),
+);
 import type {
   Ano,
   Categoria,
@@ -32,6 +28,7 @@ import type {
 
 export default function App() {
   const { tema, alternar } = useTema();
+  const { modo, definir: definirModo } = useModoVisual();
 
   const [anos, setAnos] = useState<Ano[]>([]);
   const [anoAtual, setAnoAtual] = useState<number | null>(null);
@@ -232,250 +229,50 @@ export default function App() {
     );
   }
 
-  const mes = resumo?.meses[mesAtual - 1];
-  const arquivado = resumo?.arquivado ?? false;
+  // Os dois modos recebem exatamente o mesmo pacote: mostram o mesmo mês, com
+  // as mesmas operações — só mudam o arranjo na tela.
+  const propsModo: PropsModo = {
+    tema,
+    alternar,
+    anos,
+    anoAtual,
+    setAnoAtual,
+    mesAtual,
+    setMesAtual,
+    resumo,
+    lancamentos,
+    categorias,
+    contas,
+    gastosFixos,
+    desejos,
+    faturas,
+    erro,
+    setErro,
+    importando,
+    setImportando,
+    editandoLancamento,
+    setEditandoLancamento,
+    recarregar,
+    acao,
+    alternarGastoFixo,
+    aposMudarCategorias,
+    criarCategoriaInline,
+    atualizarLancamento,
+    comAnos,
+    modo,
+    aoDefinirModo: definirModo,
+    aoSair: () => {
+      api.sair();
+      setAutenticado(false);
+    },
+  };
 
-  return (
-    <div className="min-h-screen bg-roxo-50 dark:bg-roxo-950">
-      <header className="border-b border-roxo-100 bg-white dark:border-roxo-700 dark:bg-roxo-900">
-        <div className="mx-auto flex max-w-6xl flex-wrap items-center gap-4 px-6 py-4">
-          <h1 className="text-lg font-semibold text-roxo-600 dark:text-roxo-50">
-            Planejamento Financeiro
-          </h1>
-
-          <GerenciadorAnos
-            anos={anos}
-            anoAtual={anoAtual}
-            aoTrocar={(ano) => {
-              setEditandoLancamento(null);
-              setAnoAtual(ano);
-            }}
-            aoCriar={(ano) => comAnos(() => api.criarAno(ano), ano)}
-            aoArquivar={(ano) => comAnos(() => api.arquivarAno(ano))}
-            aoDesarquivar={(ano) => comAnos(() => api.desarquivarAno(ano))}
-          />
-
-          <div className="ml-auto flex items-center gap-2">
-            {!arquivado && (
-              <button
-                onClick={() => setImportando((v) => !v)}
-                className="rounded-lg border border-roxo-200 px-3 py-1.5 text-xs font-medium text-roxo-500 hover:bg-roxo-100 dark:border-roxo-600 dark:text-roxo-100 dark:hover:bg-roxo-700"
-              >
-                Importar extrato
-              </button>
-            )}
-            <BotaoTema tema={tema} aoAlternar={alternar} />
-            <button
-              onClick={() => {
-                api.sair();
-                setAutenticado(false);
-              }}
-              className="rounded-lg border border-roxo-200 px-3 py-1.5 text-xs font-medium text-roxo-500 hover:bg-roxo-100 dark:border-roxo-600 dark:text-roxo-100 dark:hover:bg-roxo-700"
-            >
-              Sair
-            </button>
-          </div>
-        </div>
-
-        {/* As 12 páginas do ano. */}
-        <nav className="mx-auto max-w-6xl overflow-x-auto px-6">
-          <ul className="flex gap-1 pb-px">
-            {NOMES_MESES.map((nome, indice) => {
-              const numero = indice + 1;
-              const ativo = numero === mesAtual;
-              return (
-                <li key={nome}>
-                  <button
-                    onClick={() => {
-                      setEditandoLancamento(null);
-                      setMesAtual(numero);
-                    }}
-                    aria-current={ativo ? 'page' : undefined}
-                    className={`whitespace-nowrap border-b-2 px-3 py-2 text-sm ${
-                      ativo
-                        ? 'border-roxo-500 font-medium text-roxo-600 dark:border-roxo-200 dark:text-roxo-50'
-                        : 'border-transparent text-roxo-400 hover:text-roxo-600 dark:text-roxo-200 dark:hover:text-roxo-50'
-                    }`}
-                  >
-                    {nome}
-                  </button>
-                </li>
-              );
-            })}
-          </ul>
-        </nav>
-      </header>
-
-      <main className="mx-auto max-w-6xl px-6 py-6">
-        {erro && (
-          <p className="mb-4 rounded-lg bg-rose-50 px-4 py-3 text-sm text-rose-700 dark:bg-rose-950 dark:text-rose-200">
-            {erro}
-          </p>
-        )}
-
-        {importando && !arquivado && (
-          <div className="mb-5">
-            <ImportarExtrato
-              ano={anoAtual}
-              categorias={categorias}
-              contas={contas}
-              aoFechar={() => setImportando(false)}
-              aoImportar={recarregar}
-            />
-          </div>
-        )}
-
-        {resumo && mes && (
-          <div className="grid gap-5 lg:grid-cols-3">
-            <TotalGuardado resumo={resumo} />
-            <TotaisMes mes={mes} />
-            <GastosPorCategoria mes={mes} categorias={categorias} />
-
-            <GerenciadorContas
-              contas={contas}
-              posicao={mes.por_conta}
-              posicaoCartoes={mes.por_cartao}
-              faturas={faturas}
-              somenteLeitura={arquivado}
-              aoCriar={async (dados) => {
-                await api.criarConta({ ...dados, ordem: contas.length });
-                await recarregar();
-              }}
-              aoExcluir={async (id) => {
-                await api.excluirConta(id);
-                await recarregar();
-              }}
-              aoPagarFatura={async (cartaoId, contaPagamentoId) => {
-                // Erros ficam para o mini-formulário mostrar (a conta pode
-                // faltar), então não são capturados aqui.
-                await api.pagarFatura(anoAtual, cartaoId, mesAtual, contaPagamentoId);
-                await recarregar();
-              }}
-              aoDesfazerFatura={async (cartaoId) => {
-                try {
-                  await api.desfazerFatura(anoAtual, cartaoId, mesAtual);
-                  await recarregar();
-                } catch (e) {
-                  setErro(
-                    e instanceof Error
-                      ? e.message
-                      : 'Não foi possível desfazer o pagamento.',
-                  );
-                }
-              }}
-            />
-
-            <GastosFixos
-              gastos={gastosFixos}
-              contas={contas}
-              mes={mesAtual}
-              somenteLeitura={arquivado}
-              aoCriar={acao(api.criarGastoFixo)}
-              aoAtualizar={acao(api.atualizarGastoFixo)}
-              aoAlternar={alternarGastoFixo}
-              aoExcluir={acao(api.excluirGastoFixo)}
-            />
-
-            <CalendarioVencimentos
-              gastos={gastosFixos}
-              cartoes={contas.filter((c) => c.tipo === 'cartao_credito')}
-              faturas={faturas}
-              ano={anoAtual}
-              mes={mesAtual}
-              somenteLeitura={arquivado}
-              aoAlternar={alternarGastoFixo}
-              aoAlternarFatura={async (cartao, pago) => {
-                try {
-                  if (pago) {
-                    await api.pagarFatura(
-                      anoAtual,
-                      cartao.id,
-                      mesAtual,
-                      cartao.conta_pagamento_padrao_id,
-                    );
-                  } else {
-                    await api.desfazerFatura(anoAtual, cartao.id, mesAtual);
-                  }
-                  await recarregar();
-                } catch (e) {
-                  setErro(
-                    e instanceof Error
-                      ? e.message
-                      : 'Não foi possível atualizar a fatura.',
-                  );
-                }
-              }}
-            />
-
-            <Wishlist
-              desejos={desejos}
-              totalGuardado={resumo.total_guardado}
-              somenteLeitura={arquivado}
-              aoCriar={acao(api.criarDesejo)}
-              aoAtualizar={acao(api.atualizarDesejo)}
-              aoExcluir={acao(api.excluirDesejo)}
-            />
-
-            <div className="lg:col-span-3">
-              {!arquivado && (
-                <FormularioLancamento
-                  // Remonta ao trocar entre "novo" e "editando algo": mais
-                  // simples e menos propenso a erro do que sincronizar cada
-                  // campo via useEffect a cada troca de alvo.
-                  key={editandoLancamento?.id ?? 'novo'}
-                  ano={anoAtual}
-                  mes={mesAtual}
-                  contas={contas}
-                  categorias={categorias}
-                  aoSalvar={acao(api.criarLancamento)}
-                  aoCriarCategoria={criarCategoriaInline}
-                  lancamento={editandoLancamento}
-                  aoAtualizar={atualizarLancamento}
-                  aoCancelar={() => setEditandoLancamento(null)}
-                  menuCategorias={
-                    <BotaoConfiguracao rotulo="Configurar categorias">
-                      <GerenciadorCategorias
-                        categorias={categorias}
-                        somenteLeitura={arquivado}
-                        aoCriar={async (nome, cor) => {
-                          await api.criarCategoria(nome, cor);
-                          await aposMudarCategorias();
-                        }}
-                        aoRenomear={async (id, nome) => {
-                          await api.atualizarCategoria(id, { nome });
-                          await aposMudarCategorias();
-                        }}
-                        aoMudarCor={async (id, cor) => {
-                          await api.atualizarCategoria(id, { cor });
-                          await aposMudarCategorias();
-                        }}
-                        aoExcluir={async (id) => {
-                          await api.excluirCategoria(id);
-                          await aposMudarCategorias();
-                        }}
-                      />
-                    </BotaoConfiguracao>
-                  }
-                  menuFormaPagamento={
-                    <BotaoConfiguracao rotulo="Configurar cores de pagamento">
-                      <CoresPagamento />
-                    </BotaoConfiguracao>
-                  }
-                />
-              )}
-              <TabelaLancamentos
-                titulo={NOMES_MESES[mesAtual - 1]}
-                lancamentos={lancamentos}
-                contas={contas}
-                somenteLeitura={arquivado}
-                aoEditar={setEditandoLancamento}
-                aoExcluir={acao(api.excluirLancamento)}
-              />
-            </div>
-          </div>
-        )}
-      </main>
-    </div>
+  return modo === 'estatico' ? (
+    <Suspense fallback={<Aviso texto="Carregando painel…" />}>
+      <ModoEstatico {...propsModo} />
+    </Suspense>
+  ) : (
+    <ModoPlanilha {...propsModo} />
   );
 }
 

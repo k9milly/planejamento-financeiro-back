@@ -24,6 +24,8 @@ interface Props {
   aoExcluir: (id: number) => Promise<void>;
   aoPagarFatura: (cartaoId: number, contaPagamentoId?: number | null) => Promise<void>;
   aoDesfazerFatura: (cartaoId: number) => Promise<void>;
+  /** No modo painel, quem define a altura é a célula da grade. */
+  preencher?: boolean;
 }
 
 // Cores das marcas, para a conta ser reconhecível de relance.
@@ -46,6 +48,7 @@ export function GerenciadorContas({
   aoExcluir,
   aoPagarFatura,
   aoDesfazerFatura,
+  preencher,
 }: Props) {
   const [aberto, setAberto] = useState(false);
   const [tipo, setTipo] = useState<TipoConta>('corrente');
@@ -90,6 +93,7 @@ export function GerenciadorContas({
 
   return (
     <Card
+      preencher={preencher}
       titulo="Contas"
       acao={
         !somenteLeitura && (

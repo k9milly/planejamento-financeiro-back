@@ -185,10 +185,13 @@ backend/
 
 frontend/
   src/
-    App.tsx            Layout, navegação entre meses e estado da página
+    App.tsx            Sessão, busca de dados e escolha do modo de exibição
+    pages/             Um arquivo por modo: ModoPlanilha e ModoEstatico
     components/        Um componente por container da tela
+    components/widgets/  Catálogo de blocos do modo painel
     lib/api.ts         Cliente HTTP
     lib/formato.ts     Formatação em pt-BR
+    lib/layoutDashboard.ts  Layout do painel: padrão, validação e cópia local
     types/api.ts       Tipos espelhando os schemas do backend
 ```
 

@@ -161,6 +161,19 @@ pagamento da fatura. O detalhe completo está nos ADRs 0001–0003, em
 `docs/adr/`, e na spec em `docs/specs/pagamentos-e-cartoes.md`; o plano de
 implementação por fases está em `docs/PLANO-IMPLEMENTACAO.md`.
 
+### Dois modos de visualização, e o painel ajustável
+
+A mesma página de mês tem duas formas: a **planilha** (containers fixos, o
+padrão) e o **painel** (grade de blocos que a usuária arruma). Os dois recebem
+o mesmo pacote de props e operam sobre os mesmos dados — só muda o arranjo.
+
+A grade usa `react-grid-layout`; o arranjo é guardado como texto opaco em
+`usuarios.layout_dashboard`, validado só no frontend. O painel é carregado sob
+demanda, porque traz as duas dependências mais pesadas do projeto
+(`react-grid-layout` e Recharts) e o uso comum, no celular, é a planilha.
+
+Detalhe nos ADRs 0004–0007 e na spec `docs/specs/modo-estatico-e-widgets.md`.
+
 ### Como funciona a autenticação
 
 Senha com **bcrypt**, sessão com **JWT**.

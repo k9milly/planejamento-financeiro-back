@@ -6,23 +6,41 @@ interface Props {
   /** Ocupa a largura toda — usado pelo container de lançamentos. */
   largo?: boolean;
   acao?: ReactNode;
+  /**
+   * Ocupa toda a altura disponível, rolando o conteúdo que sobrar.
+   *
+   * Usado pelo modo painel, onde quem manda na altura é a célula da grade:
+   * sem isto, um card curto flutuaria no topo do bloco e um comprido
+   * vazaria por baixo dele.
+   */
+  preencher?: boolean;
 }
 
 /** Container visual padrão. Todos os blocos da página de mês usam este. */
-export function Card({ titulo, children, largo = false, acao }: Props) {
+export function Card({
+  titulo,
+  children,
+  largo = false,
+  acao,
+  preencher = false,
+}: Props) {
   return (
     <section
-      className={`rounded-xl border border-roxo-100 bg-white shadow-sm dark:border-roxo-700 dark:bg-roxo-900 ${
-        largo ? 'lg:col-span-3' : ''
-      }`}
+      className={[
+        'rounded-xl border border-roxo-100 bg-white shadow-sm dark:border-roxo-700 dark:bg-roxo-900',
+        largo ? 'lg:col-span-3' : '',
+        preencher ? 'flex h-full flex-col overflow-hidden' : '',
+      ].join(' ')}
     >
-      <header className="flex items-center justify-between border-b border-roxo-100 px-5 py-3 dark:border-roxo-700">
+      <header className="flex shrink-0 items-center justify-between border-b border-roxo-100 px-5 py-3 dark:border-roxo-700">
         <h2 className="text-sm font-semibold uppercase tracking-wide text-roxo-400 dark:text-roxo-200">
           {titulo}
         </h2>
         {acao}
       </header>
-      <div className="p-5">{children}</div>
+      <div className={`p-5 ${preencher ? 'min-h-0 flex-1 overflow-auto' : ''}`}>
+        {children}
+      </div>
     </section>
   );
 }

@@ -10,6 +10,7 @@ import type {
   FormaPagamento,
   GastoFixo,
   Importancia,
+  LayoutDashboard,
   SaldoInicial,
   Lancamento,
   NovoLancamento,
@@ -337,5 +338,19 @@ export const api = {
     requisitar<CorPagamento>(`/preferencias/cores-forma-pagamento/${forma}`, {
       method: 'PUT',
       body: JSON.stringify({ cor }),
+    }),
+
+  /**
+   * Layout do painel. `layout` é uma string opaca para o servidor: ele guarda
+   * e devolve sem olhar dentro (ver `docs/CONTRATO-API.md`), então quem
+   * valida o conteúdo é `lib/layoutDashboard.ts`.
+   */
+  layoutDashboard: () =>
+    requisitar<LayoutDashboard>('/preferencias/layout-dashboard'),
+
+  salvarLayoutDashboard: (layout: string) =>
+    requisitar<LayoutDashboard>('/preferencias/layout-dashboard', {
+      method: 'PUT',
+      body: JSON.stringify({ layout }),
     }),
 };
