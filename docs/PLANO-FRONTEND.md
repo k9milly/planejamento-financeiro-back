@@ -9,7 +9,7 @@ tudo isso traduzido.
 **Referência de arquitetura:** ADRs `0004`, `0005`, `0007` (dois modos,
 motor de grade, escopo do catálogo de widgets) e a metade frontend do
 `0006` (quando salvar, o que fica local vs. servidor). Specs:
-`docs/specs/modo-estatico-e-widgets.md` (completa) e as seções "Telas
+`docs/specs/modo-painel-e-widgets.md` (completa) e as seções "Telas
 afetadas" de `docs/specs/pagamentos-e-cartoes.md` (1, 2, 3 e 4) — que é
 onde está o detalhe de cada componente a mudar.
 
