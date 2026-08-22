@@ -1,6 +1,11 @@
 import { Card } from './Card';
 import { moeda } from '../lib/formato';
-import type { ResumoMes } from '../types/api';
+import type { Categoria, ResumoMes } from '../types/api';
+
+interface Props {
+  mes: ResumoMes;
+  categorias: Categoria[];
+}
 
 /**
  * Container de gastos por categoria, com barra proporcional.
@@ -9,9 +14,10 @@ import type { ResumoMes } from '../types/api';
  * comparar categorias entre si é o que interessa aqui — o percentual sobre o
  * total fica no número ao lado.
  */
-export function GastosPorCategoria({ mes }: { mes: ResumoMes }) {
+export function GastosPorCategoria({ mes, categorias }: Props) {
   const gastos = mes.gastos_por_categoria;
   const maior = gastos.length ? Number(gastos[0].total) : 0;
+  const corDe = (nome: string) => categorias.find((c) => c.nome === nome)?.cor;
 
   return (
     <Card titulo="Gastos por categoria">
@@ -22,7 +28,12 @@ export function GastosPorCategoria({ mes }: { mes: ResumoMes }) {
           {gastos.map((gasto) => (
             <li key={gasto.categoria}>
               <div className="flex items-baseline justify-between gap-3 text-sm">
-                <span className="text-roxo-600 dark:text-roxo-100">{gasto.categoria}</span>
+                <span
+                  className="text-roxo-600 dark:text-roxo-100"
+                  style={corDe(gasto.categoria) ? { color: corDe(gasto.categoria) } : undefined}
+                >
+                  {gasto.categoria}
+                </span>
                 <span className="tabular-nums font-medium text-roxo-700 dark:text-roxo-50">
                   {moeda(gasto.total)}
                   <span className="ml-2 text-xs font-normal text-roxo-300">

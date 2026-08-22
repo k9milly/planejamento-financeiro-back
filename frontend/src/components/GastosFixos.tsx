@@ -1,11 +1,10 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { Card } from './Card';
 import { ESTILO_FORMA_PAGAMENTO, moeda } from '../lib/formato';
-import type { Categoria, Conta, FormaPagamento, GastoFixo } from '../types/api';
+import type { Conta, FormaPagamento, GastoFixo } from '../types/api';
 
 interface Props {
   gastos: GastoFixo[];
-  categorias: Categoria[];
   contas: Conta[];
   mes: number;
   somenteLeitura: boolean;
@@ -14,9 +13,18 @@ interface Props {
     valor: string;
     dia_vencimento: number;
     conta_id: number;
-    categoria_id?: number | null;
     forma_pagamento?: FormaPagamento | null;
   }) => Promise<void>;
+  aoAtualizar: (
+    id: number,
+    dados: Partial<{
+      descricao: string;
+      valor: string;
+      dia_vencimento: number;
+      conta_id: number;
+      forma_pagamento: FormaPagamento | null;
+    }>,
+  ) => Promise<void>;
   aoAlternar: (gasto: GastoFixo, pago: boolean) => Promise<void>;
   aoExcluir: (id: number) => Promise<void>;
 }
@@ -31,19 +39,19 @@ const FORMAS_PAGAMENTO = Object.keys(ESTILO_FORMA_PAGAMENTO) as FormaPagamento[]
  */
 export function GastosFixos({
   gastos,
-  categorias,
   contas,
   mes,
   somenteLeitura,
   aoCriar,
+  aoAtualizar,
   aoAlternar,
   aoExcluir,
 }: Props) {
   const [aberto, setAberto] = useState(false);
+  const [editandoId, setEditandoId] = useState<number | null>(null);
   const [descricao, setDescricao] = useState('');
   const [valor, setValor] = useState('');
-  const [dia, setDia] = useState('1');
-  const [categoriaId, setCategoriaId] = useState('');
+  const [dia, setDia] = useState('');
   const [contaId, setContaId] = useState('');
   const [formaPagamento, setFormaPagamento] = useState<FormaPagamento>('debito');
   const [erro, setErro] = useState('');
@@ -69,21 +77,44 @@ export function GastosFixos({
     lista.reduce((soma, g) => soma + Number(g.valor), 0);
   const pendente = total(ativos) - total(pagos);
 
+  function iniciarEdicao(gasto: GastoFixo) {
+    setEditandoId(gasto.id);
+    setDescricao(gasto.descricao);
+    setValor(gasto.valor);
+    setDia(String(gasto.dia_vencimento));
+    setContaId(String(gasto.conta_id));
+    setFormaPagamento(gasto.forma_pagamento ?? 'debito');
+    setAberto(true);
+  }
+
+  function fecharFormulario() {
+    setAberto(false);
+    setEditandoId(null);
+    setDescricao('');
+    setValor('');
+    setDia('');
+  }
+
   async function enviar(evento: FormEvent) {
     evento.preventDefault();
     setErro('');
+    // Categoria não é editável aqui de propósito: um gasto fixo que muda de
+    // categoria deixou de ser fixo, então some desta lista — não faz sentido
+    // essa tela mexer nela.
+    const dados = {
+      descricao,
+      valor,
+      dia_vencimento: Number(dia),
+      conta_id: Number(contaId),
+      forma_pagamento: formaPagamento,
+    };
     try {
-      await aoCriar({
-        descricao,
-        valor,
-        dia_vencimento: Number(dia),
-        conta_id: Number(contaId),
-        categoria_id: categoriaId ? Number(categoriaId) : null,
-        forma_pagamento: formaPagamento,
-      });
-      setDescricao('');
-      setValor('');
-      setAberto(false);
+      if (editandoId !== null) {
+        await aoAtualizar(editandoId, dados);
+      } else {
+        await aoCriar(dados);
+      }
+      fecharFormulario();
     } catch (e) {
       setErro(e instanceof Error ? e.message : 'Não foi possível salvar.');
     }
@@ -98,7 +129,8 @@ export function GastosFixos({
       acao={
         !somenteLeitura && (
           <button
-            onClick={() => setAberto(!aberto)}
+            type="button"
+            onClick={() => (aberto ? fecharFormulario() : setAberto(true))}
             className="text-xs font-medium text-roxo-400 dark:text-roxo-200 hover:text-roxo-600 dark:hover:text-roxo-50"
           >
             {aberto ? 'Cancelar' : '+ Novo'}
@@ -132,6 +164,7 @@ export function GastosFixos({
               max="31"
               value={dia}
               onChange={(e) => setDia(e.target.value)}
+              placeholder="Dia"
               className={`${campo} w-20`}
               aria-label="Dia do vencimento"
               required
@@ -144,7 +177,7 @@ export function GastosFixos({
             >
               {FORMAS_PAGAMENTO.map((f) => (
                 <option key={f} value={f}>
-                  {ESTILO_FORMA_PAGAMENTO[f].icone} {ESTILO_FORMA_PAGAMENTO[f].rotulo}
+                  {ESTILO_FORMA_PAGAMENTO[f].rotulo}
                 </option>
               ))}
             </select>
@@ -162,26 +195,11 @@ export function GastosFixos({
               ))}
             </select>
           </div>
-          <div className="flex flex-wrap gap-2">
-            <select
-              value={categoriaId}
-              onChange={(e) => setCategoriaId(e.target.value)}
-              className={`${campo} flex-1`}
-              aria-label="Categoria"
-            >
-              <option value="">Sem categoria</option>
-              {categorias.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.nome}
-                </option>
-              ))}
-            </select>
-          </div>
           <button
             type="submit"
             className="w-full rounded-lg bg-roxo-500 dark:bg-roxo-400 px-4 py-2 text-sm font-medium text-white hover:bg-roxo-400"
           >
-            Adicionar
+            {editandoId !== null ? 'Salvar' : 'Adicionar'}
           </button>
           {erro && <p className="text-sm text-rose-600">{erro}</p>}
         </form>
@@ -223,13 +241,24 @@ export function GastosFixos({
                   {moeda(gasto.valor)}
                 </span>
                 {!somenteLeitura && (
-                  <button
-                    onClick={() => void aoExcluir(gasto.id)}
-                    className="text-xs text-roxo-200 opacity-0 hover:text-rose-600 group-hover:opacity-100"
-                    aria-label={`Excluir ${gasto.descricao}`}
-                  >
-                    ✕
-                  </button>
+                  <span className="flex items-center gap-2 opacity-0 group-hover:opacity-100">
+                    <button
+                      type="button"
+                      onClick={() => iniciarEdicao(gasto)}
+                      className="text-xs text-roxo-300 hover:text-roxo-500"
+                      aria-label={`Editar ${gasto.descricao}`}
+                    >
+                      Editar
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void aoExcluir(gasto.id)}
+                      className="text-xs text-roxo-200 hover:text-rose-600"
+                      aria-label={`Excluir ${gasto.descricao}`}
+                    >
+                      ✕
+                    </button>
+                  </span>
                 )}
               </li>
             );

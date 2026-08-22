@@ -31,6 +31,7 @@ from app.models import (
     Ano,
     Categoria,
     Conta,
+    CorFormaPagamento,
     FaturaMensal,
     GastoFixo,
     GastoFixoMensal,
@@ -55,6 +56,7 @@ ORDEM = [
     GastoFixoMensal,
     FaturaMensal,
     ItemWishlist,
+    CorFormaPagamento,
 ]
 
 # A origem é o banco local, e não `settings.database_url`: na hora de copiar, a
@@ -144,6 +146,10 @@ def _corrigir_sequencias(sessao, destino_url: str) -> None:
     from sqlalchemy import text
 
     for modelo in ORDEM:
+        # Só tabelas com id autoincrementado têm sequência a corrigir —
+        # `cores_forma_pagamento` usa a própria forma de pagamento como chave.
+        if "id" not in colunas(modelo):
+            continue
         tabela = modelo.__tablename__
         sessao.execute(
             text(

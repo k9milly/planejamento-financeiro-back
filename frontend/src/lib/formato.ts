@@ -67,10 +67,13 @@ export const ESTILO_TIPO = {
   },
 } as const;
 
-/** Ícone e rótulo curto de cada forma de pagamento, para a tabela conferir de relance. */
+/**
+ * Rótulo de cada forma de pagamento. Só texto — sem emoji, e a cor não é
+ * fixa aqui: vem de `useCoresPagamento`, porque é editável pela usuária.
+ */
 export const ESTILO_FORMA_PAGAMENTO = {
-  credito: { rotulo: 'Crédito', icone: '💳' },
-  debito: { rotulo: 'Débito', icone: '💵' },
-  pix: { rotulo: 'Pix', icone: '⚡' },
-  dinheiro: { rotulo: 'Dinheiro', icone: '💰' },
+  credito: { rotulo: 'Crédito' },
+  debito: { rotulo: 'Débito' },
+  pix: { rotulo: 'Pix' },
+  dinheiro: { rotulo: 'Dinheiro' },
 } as const;

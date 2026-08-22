@@ -125,6 +125,18 @@ class CategoriaOut(_Base):
 
 
 # --------------------------------------------------------------------------- #
+# Preferências (cores da forma de pagamento)
+# --------------------------------------------------------------------------- #
+class CorFormaPagamentoDefinir(BaseModel):
+    cor: str = Field(pattern=r"^#[0-9a-fA-F]{6}$")
+
+
+class CorFormaPagamentoOut(_Base):
+    forma_pagamento: FormaPagamento
+    cor: str
+
+
+# --------------------------------------------------------------------------- #
 # Lançamentos
 # --------------------------------------------------------------------------- #
 class LancamentoBase(BaseModel):

@@ -406,6 +406,27 @@ class RegraCategorizacao(Base):
     categoria: Mapped["Categoria"] = relationship()
 
 
+class CorFormaPagamento(Base):
+    """Cor de exibição de cada forma de pagamento (débito, crédito, pix,
+    dinheiro), puramente cosmética.
+
+    Fica no banco — não no navegador — de propósito: a usuária usa o app tanto
+    no celular quanto no PC, e uma preferência salva só em `localStorage` não
+    apareceria igual nos dois. Global, como `Categoria.cor`: as quatro formas
+    de pagamento são fixas para o app inteiro, não por ano nem por usuário.
+
+    Uma linha só existe aqui depois que a usuária troca a cor pela primeira
+    vez; antes disso, o padrão vem do código (ver `app/routers/preferencias.py`).
+    """
+
+    __tablename__ = "cores_forma_pagamento"
+
+    forma_pagamento: Mapped[FormaPagamento] = mapped_column(
+        Enum(FormaPagamento, native_enum=False), primary_key=True
+    )
+    cor: Mapped[str] = mapped_column(String(7), nullable=False)
+
+
 class FaturaMensal(Base):
     """Situação da fatura de um cartão em um mês específico (pago/pendente).
 
