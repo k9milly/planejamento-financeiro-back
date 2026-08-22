@@ -5,10 +5,17 @@ terceira rodada (canvas infinito no lugar da grade responsiva original —
 ver ADR-0008). As decisões de arquitetura por trás de cada parte estão nos
 ADRs 0004–0008, em `docs/adr/`; este documento é o "o quê".
 
-> **Nota de revisão:** a seção 2 abaixo foi reescrita para refletir o
-> ADR-0008 (canvas infinito, `dnd-kit`) no lugar do ADR-0005 (grade
-> responsiva, `react-grid-layout`), que ela descrevia originalmente. O
-> resto do documento (seções 1 e 3) não mudou.
+> **Nota de revisão (rodada 3):** a seção 2 abaixo foi reescrita para
+> refletir o ADR-0008 (canvas infinito, `dnd-kit`) no lugar do ADR-0005
+> (grade responsiva, `react-grid-layout`), que ela descrevia originalmente.
+>
+> **Nota de revisão (rodada 4):** testado de verdade, faltava barra de
+> rolagem (referência de posição) e zoom. O ADR-0009 troca o mecanismo de
+> rolagem do canvas — nativa do navegador, não mais `transform:
+> translate()` — e acrescenta zoom em degraus. Os dois parágrafos de "O
+> canvas", abaixo, foram atualizados; o resto da seção 2 (coordenadas com
+> sinal, colisão bloqueada, virtualização, modo de edição) não mudou. As
+> seções 1 e 3 também não mudaram.
 
 Terminologia usada pelo usuário, mantida ao longo do documento: **modo
 planilha** (interface atual, inalterada) e **modo painel** (a interface
@@ -68,27 +75,33 @@ Reestruturação (sem mudar o que já funciona):
 
 ## 2. Canvas infinito (só no modo painel)
 
-Ver ADR-0008 para o raciocínio completo. Esta seção é o "o quê" resultante.
+Ver ADR-0008 e ADR-0009 para o raciocínio completo. Esta seção é o "o quê"
+resultante.
 
 ### O canvas
 
-Uma superfície pannable nas quatro direções, sem tamanho máximo, movida
-por `transform: translate()` (não por scroll nativo — ver ADR-0008 sobre
-por que). Arrastar o fundo (fora de qualquer widget) ou usar a roda do
-mouse/trackpad move o pan. Não há borda, moldura ou container de tamanho
-fixo recortando o conteúdo — a área "existe" onde quer que o usuário tenha
-colocado ou rolado até um widget, e continua existindo além disso sob
-demanda (ver "Extensão sob demanda" abaixo).
+Uma área rolável nativa do navegador (`overflow: auto`), grande — 200
+colunas × 400 linhas no zoom 100% — mas finita (ADR-0009; era `transform:
+translate()` sem borda nenhuma nas duas primeiras versões desta spec).
+Rola pela barra de rolagem, pela roda do mouse/trackpad ou por toque, como
+qualquer área com scroll. Coordenadas de célula negativas (widget acima ou
+à esquerda da origem) continuam possíveis: um deslocamento de origem fixo
+(`ORIGEM_COL`/`ORIGEM_LIN`) garante que `scrollLeft`/`scrollTop` — que não
+aceitam valor negativo — nunca precisem ser negativos para isso.
+
+Um controle de zoom no canto inferior direito (`− 100% +`, no molde do
+Google Sheets) escala tudo junto — texto, widgets, espaçamento — em
+degraus fixos (25% a 200%). Trocar de degrau mantém o ponto do canvas que
+está no centro da tela, para o zoom não "chutar" a visão para outro lugar.
 
 Um fundo com um padrão sutil de grade (linhas finas marcando as células)
-reforça visualmente a metáfora de planilha e ajuda a perceber o
-movimento do pan.
+reforça visualmente a metáfora de planilha.
 
 ### Modo de visualização vs. modo de edição
 
 Por padrão, o modo painel abre em **modo de visualização**: os widgets
 não podem ser arrastados nem redimensionados (evita mover um bloco sem
-querer ao rolar/arrastar o fundo para navegar). O pan continua funcionando
+querer ao rolar a tela para navegar). Rolar continua funcionando
 normalmente nos dois modos — só a manipulação dos widgets é que fica
 travada fora do modo de edição. Um botão "Editar layout" entra em **modo
 de edição**, que:
@@ -102,10 +115,10 @@ de edição**, que:
   volta);
 - mostra os botões "Salvar layout" e "Restaurar padrão" (ver ADR-0006 e
   "Confirmação de salvamento" abaixo);
-- mostra um botão fixo "Centralizar" (ícone de mira), que reposiciona o
-  pan para enquadrar todos os widgets existentes — sem ele, é fácil rolar
-  demais numa direção e não achar o caminho de volta num canvas sem
-  limite.
+- mostra um botão fixo "Centralizar" (ícone de mira), que rola de volta
+  até enquadrar todos os widgets existentes — sem ele, é fácil rolar
+  demais numa direção numa área grande e perder a referência de onde os
+  widgets estão.
 
 Sair do modo de edição (botão "Concluir") volta ao modo de visualização
 travado — o estado de edição em si **não** precisa ser persistido, só o
@@ -129,31 +142,31 @@ nesta v1). Widgets sempre ocupam um número inteiro de células — arrastar e
 redimensionar fazem *snap* para a grade de células, não para pixels
 livres, reforçando a metáfora de planilha.
 
-### Extensão sob demanda e limite técnico
+### Tamanho da área rolável (ADR-0009)
 
-O app acompanha o retângulo `(colMin, colMax, linMin, linMax)` em uso
-(união dos widgets existentes e de até onde o usuário já rolou). Ao chegar
-perto de uma borda, a extensão disponível cresce mais um tanto — na
-prática, nunca há uma borda alcançável. Internamente, a extensão satura
-numa constante muito grande (sugestão: ±100.000 células) por limitação de
-pixels renderizáveis do navegador, não por design — o usuário nunca chega
-perto disso em uso normal (mesmo limite de natureza que o Google Sheets
-tem e ninguém percebe).
+A área é grande, mas finita e visível — a barra de rolagem mostra isso
+honestamente, ao contrário da tentativa "infinita" da versão anterior
+desta spec, que também tinha um teto técnico, só que escondido. 200
+colunas × 400 linhas no zoom 100% (48.000×48.000px) é generoso o bastante
+para que nenhum uso real chegue perto da borda — mas, se chegar, a barra
+de rolagem simplesmente para, como em qualquer documento com scroll (o
+mesmo tipo de limite que o Google Sheets tem, com 10 milhões de células,
+sem que ninguém perceba).
 
 ### Virtualização
 
 Só widgets cujo retângulo intersecta a janela de visualização atual (mais
-uma margem) são montados no DOM. Isso é necessário — diferente da grade
-responsiva antiga, que cabia inteira na tela por definição, um canvas
-infinito pode acumular widgets muito além do que está visível a qualquer
-momento.
+uma margem) são montados no DOM, com base em `scrollLeft`/`scrollTop`.
+Isso é necessário — diferente da grade responsiva antiga, que cabia
+inteira na tela por definição, este canvas pode acumular widgets muito
+além do que está visível a qualquer momento.
 
 ### Colisão: bloqueada, sem reflow automático
 
 Soltar um widget sobre células já ocupadas por outro é rejeitado — ele
 volta para a última posição válida (pequena animação de retorno). Não há
 reorganização automática dos vizinhos (o "empurrar" que uma grade
-responsiva compacta precisa não se aplica aqui: num canvas infinito, o
+responsiva compacta precisa não se aplica aqui: numa área deste tamanho, o
 usuário sempre tem espaço livre ao lado).
 
 ### Carregamento e persistência (fluxo completo)
@@ -196,8 +209,10 @@ configurado para uma conta diferente, via `config.conta_id`).
 
 ### Critérios de aceite
 
-- Rolar/arrastar o fundo do canvas em qualquer direção (inclusive além de
-  onde qualquer widget já esteve) nunca esbarra numa borda visível.
+- Rolar em qualquer direção mostra a barra de rolagem nativa do
+  navegador nos dois eixos, e não esbarra numa borda visível dentro do
+  uso normal (a área é grande demais para isso — ver "Tamanho da área
+  rolável").
 - Um widget pode ser colocado em coordenadas negativas (acima/à esquerda
   da origem) sem tratamento especial.
 - Soltar um widget sobre outro já existente não move nenhum dos dois —
@@ -206,10 +221,12 @@ configurado para uma conta diferente, via `config.conta_id`).
   volta à tela.
 - "Layout salvo" desaparece sozinho — nunca fica preso na tela depois de
   clicar em "Salvar layout" mais de uma vez seguida.
-- Em tela estreita (celular), o modo de edição fica desabilitado — o pan
-  (arrastar o fundo com um dedo) continua funcionando para navegar entre
-  os widgets já posicionados, mas redimensionar por alça e o catálogo de
-  adicionar ficam fora de escopo nesta v1 (ver "fora de escopo").
+- Em tela estreita (celular), o modo de edição fica desabilitado — rolar
+  por toque continua funcionando para navegar entre os widgets já
+  posicionados, mas redimensionar por alça e o catálogo de adicionar
+  ficam fora de escopo nesta v1 (ver "fora de escopo").
+- O controle de zoom (`− 100% +`) escala tudo junto e mantém o ponto
+  central da tela ao trocar de degrau.
 
 ---
 
@@ -281,9 +298,10 @@ continua intacta no modo planilha). Recomenda-se, na hora de implementar:
   depende dele (ADR-0007).
 - Dívidas e investimentos como entidades com suas próprias linhas
   (parcela, aporte, rendimento individual).
-- Redimensionar widgets por alça em tela estreita (o pan por toque, sim,
+- Redimensionar widgets por alça em tela estreita (rolar por toque, sim,
   funciona — ver critérios de aceite da seção 2).
-- Zoom do canvas (só pan nesta v1 — ver ADR-0008).
+- Zoom contínuo (pinça no trackpad, `Ctrl`+roda) — os degraus fixos do
+  controle `− 100% +` cobrem o pedido (ADR-0009).
 - Intervalo de datas livre no cabeçalho do período (a v1 usa sempre o mês
   calendário corrente, como o resto do app).
 - Aplicar o mesmo canvas infinito ao modo planilha — o motor (ADR-0008) é

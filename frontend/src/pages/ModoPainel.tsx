@@ -6,7 +6,6 @@ import {
   useState,
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
-  type WheelEvent as ReactWheelEvent,
 } from 'react';
 import {
   DndContext,
@@ -28,23 +27,30 @@ import {
   interpretar,
   layoutLocal,
   LAYOUT_PADRAO,
-  LIMITE_PX,
+  limitarRetangulo,
+  NIVEIS_ZOOM,
+  ORIGEM_COL,
+  ORIGEM_LIN,
   remover,
   retanguloPx,
   serializar,
+  TOTAL_COLS,
+  TOTAL_ROWS,
+  ZOOM_PADRAO,
   type ItemLayout,
 } from '../lib/layoutDashboard';
 import { CATALOGO, ID_WIDGETS, type ContextoWidget, type TipoWidget } from '../components/widgets/catalogo';
 import { Cabecalho } from '../components/Cabecalho';
 import type { PropsModo } from './tiposModo';
 
-/** Abaixo disto, o modo de edição fica fora de escopo — só o pan por toque funciona (ADR-0008). */
+/** Abaixo disto, o modo de edição fica fora de escopo — só rolar continua funcionando (ADR-0008). */
 const LARGURA_MINIMA_EDICAO = 768;
 const MARGEM_VIRTUALIZACAO = 300; // px, para o widget não "piscar" ao entrar na tela
 
 /**
- * Modo "painel": canvas infinito, pannable nas quatro direções, onde a
- * usuária arrasta, redimensiona, adiciona e remove widgets (ADR-0008).
+ * Modo "painel": um canvas grande (não infinito de verdade — ver ADR-0009)
+ * com rolagem nativa do navegador e zoom em degraus, no molde do Google
+ * Sheets. A usuária arrasta, redimensiona, adiciona e remove widgets.
  *
  * Ao contrário do modo planilha, este componente sempre se desenha num
  * tema escuro — o `<div className="dark">` na raiz ativa as variantes
@@ -62,17 +68,19 @@ export function ModoPainel(props: PropsModo) {
   const [salvando, setSalvando] = useState(false);
   const [toast, setToast] = useState('');
   const [catalogoAberto, setCatalogoAberto] = useState(false);
-  const [pan, setPan] = useState({ x: window.innerWidth / 2, y: 80 });
+  const [zoom, setZoom] = useState<number>(ZOOM_PADRAO);
+  const [scrollPos, setScrollPos] = useState({ left: 0, top: 0 });
 
   const toastTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-  const viewportRef = useRef<HTMLDivElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const conteudoRef = useRef<HTMLDivElement>(null);
   const [viewport, setViewport] = useState({ w: 0, h: 0 });
 
   const larga = viewport.w >= LARGURA_MINIMA_EDICAO;
 
-  // Mede o viewport para virtualização e para o botão "Centralizar".
+  // Mede a área visível (para virtualização, "Centralizar" e a checagem de tela larga).
   useEffect(() => {
-    const alvo = viewportRef.current;
+    const alvo = scrollRef.current;
     if (!alvo) return;
     const medir = () => setViewport({ w: alvo.clientWidth, h: alvo.clientHeight });
     medir();
@@ -85,7 +93,7 @@ export function ModoPainel(props: PropsModo) {
     };
   }, []);
 
-  // Carrega do servidor uma vez ao entrar no modo (ADR-0006/ADR-0008, "Carregamento e persistência").
+  // Carrega do servidor uma vez ao entrar no modo (ADR-0006, "Carregamento e persistência").
   useEffect(() => {
     let valido = true;
     api
@@ -113,13 +121,17 @@ export function ModoPainel(props: PropsModo) {
     layoutLocal.gravar(novo);
   }
 
+  function avisar(texto: string) {
+    clearTimeout(toastTimer.current);
+    setToast(texto);
+    toastTimer.current = setTimeout(() => setToast(''), 3000);
+  }
+
   async function salvar() {
     setSalvando(true);
     try {
       await api.salvarLayoutDashboard(serializar(layout));
-      clearTimeout(toastTimer.current);
-      setToast('Layout salvo.');
-      toastTimer.current = setTimeout(() => setToast(''), 3000);
+      avisar('Layout salvo.');
     } catch (e) {
       setErro(e instanceof Error ? e.message : 'Não foi possível salvar o layout.');
     } finally {
@@ -132,9 +144,7 @@ export function ModoPainel(props: PropsModo) {
   function restaurarPadrao() {
     layoutLocal.limpar();
     setLayout(LAYOUT_PADRAO);
-    clearTimeout(toastTimer.current);
-    setToast('Layout restaurado. Salve para valer em todos os aparelhos.');
-    toastTimer.current = setTimeout(() => setToast(''), 3000);
+    avisar('Layout restaurado. Salve para valer em todos os aparelhos.');
   }
 
   function adicionarWidget(tipo: TipoWidget) {
@@ -150,23 +160,65 @@ export function ModoPainel(props: PropsModo) {
     mudarLayout(atualizarConfig(layout, id, config));
   }
 
+  /** Rola até enquadrar o centro do conjunto de widgets — a referência de "onde eu estou" do canvas. */
   const centralizar = useCallback(() => {
+    const alvo = scrollRef.current;
+    if (!alvo) return;
     const centro = centroide(layout);
-    setPan({
-      x: viewport.w / 2 - (centro.coluna * CELL_W + CELL_W / 2),
-      y: viewport.h / 2 - (centro.linha * CELL_H + CELL_H / 2),
-    });
-  }, [layout, viewport]);
+    const x = (centro.coluna + ORIGEM_COL) * CELL_W * zoom;
+    const y = (centro.linha + ORIGEM_LIN) * CELL_H * zoom;
+    alvo.scrollTo({ left: x - viewport.w / 2, top: y - viewport.h / 2 });
+    setScrollPos({ left: alvo.scrollLeft, top: alvo.scrollTop });
+  }, [layout, viewport, zoom]);
 
   // Centraliza uma vez, assim que o viewport é medido pela primeira vez.
   const centralizouUmaVez = useRef(false);
   useEffect(() => {
     if (centralizouUmaVez.current || viewport.w === 0) return;
     centralizouUmaVez.current = true;
-    centralizar();
-  }, [viewport, centralizar]);
+    const alvo = scrollRef.current;
+    if (!alvo) return;
+    const centro = centroide(layout);
+    alvo.scrollLeft = (centro.coluna + ORIGEM_COL) * CELL_W * zoom - viewport.w / 2;
+    alvo.scrollTop = (centro.linha + ORIGEM_LIN) * CELL_H * zoom - viewport.h / 2;
+    setScrollPos({ left: alvo.scrollLeft, top: alvo.scrollTop });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [viewport]);
 
-  const arrastarBg = usePanDoFundo(pan, setPan);
+  /**
+   * Muda o degrau de zoom mantendo o ponto do canvas que está no centro da
+   * tela — sem isso, cada clique no zoom "chutaria" a visão para outro
+   * lugar, exatamente o tipo de desorientação que a barra de scroll (e o
+   * zoom) deveriam resolver, não criar de novo.
+   */
+  function mudarZoom(novoZoom: number) {
+    const alvo = scrollRef.current;
+    const conteudo = conteudoRef.current;
+    if (!alvo || !conteudo) {
+      setZoom(novoZoom);
+      return;
+    }
+    const centroXConteudo = (alvo.scrollLeft + viewport.w / 2) / zoom;
+    const centroYConteudo = (alvo.scrollTop + viewport.h / 2) / zoom;
+
+    // Aplica o novo zoom no DOM *antes* de mexer no scroll: só assim o
+    // navegador conhece a área rolável nova (`scrollWidth`/`scrollHeight`)
+    // na hora de aceitar o `scrollLeft`/`scrollTop` calculados — escrever
+    // scroll contra o tamanho antigo (esperando o React re-renderizar
+    // depois) faz o navegador arredondar para o limite antigo, menor.
+    conteudo.style.transform = `scale(${novoZoom})`;
+    const novoScrollLeft = centroXConteudo * novoZoom - viewport.w / 2;
+    const novoScrollTop = centroYConteudo * novoZoom - viewport.h / 2;
+    alvo.scrollLeft = novoScrollLeft;
+    alvo.scrollTop = novoScrollTop;
+
+    setZoom(novoZoom);
+    setScrollPos({ left: alvo.scrollLeft, top: alvo.scrollTop });
+  }
+
+  const indiceZoom = NIVEIS_ZOOM.indexOf(zoom as (typeof NIVEIS_ZOOM)[number]);
+  const aumentarZoom = () => indiceZoom < NIVEIS_ZOOM.length - 1 && mudarZoom(NIVEIS_ZOOM[indiceZoom + 1]);
+  const diminuirZoom = () => indiceZoom > 0 && mudarZoom(NIVEIS_ZOOM[indiceZoom - 1]);
 
   const sensores = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
@@ -175,16 +227,16 @@ export function ModoPainel(props: PropsModo) {
   function aoSoltarArrasto(evento: DragEndEvent) {
     const item = layout.find((i) => i.id === evento.active.id);
     if (!item) return;
-    const deltaCol = Math.round(evento.delta.x / CELL_W);
-    const deltaLin = Math.round(evento.delta.y / CELL_H);
+    const deltaCol = Math.round(evento.delta.x / zoom / CELL_W);
+    const deltaLin = Math.round(evento.delta.y / zoom / CELL_H);
     if (deltaCol === 0 && deltaLin === 0) return;
 
-    const candidato = {
+    const candidato = limitarRetangulo({
       coluna: item.coluna + deltaCol,
       linha: item.linha + deltaLin,
       largura: item.largura,
       altura: item.altura,
-    };
+    });
     if (colide(layout, candidato, item.id)) return; // volta pro lugar sozinho
 
     mudarLayout(
@@ -195,20 +247,31 @@ export function ModoPainel(props: PropsModo) {
   function aoRedimensionar(id: string, largura: number, altura: number) {
     const item = layout.find((i) => i.id === id);
     if (!item) return;
-    const candidato = { coluna: item.coluna, linha: item.linha, largura, altura };
-    if (largura < 1 || altura < 1) return;
+    // Redimensionar mantém o canto superior esquerdo fixo — quem cede é o
+    // tamanho, não a posição (diferente do arrasto, onde é o oposto).
+    const larguraMax = TOTAL_COLS - ORIGEM_COL - item.coluna;
+    const alturaMax = TOTAL_ROWS - ORIGEM_LIN - item.linha;
+    const larguraFinal = Math.max(1, Math.min(largura, larguraMax));
+    const alturaFinal = Math.max(1, Math.min(altura, alturaMax));
+
+    const candidato = { coluna: item.coluna, linha: item.linha, largura: larguraFinal, altura: alturaFinal };
     if (colide(layout, candidato, id)) return;
-    mudarLayout(layout.map((i) => (i.id === id ? { ...i, largura, altura } : i)));
+    mudarLayout(layout.map((i) => (i.id === id ? { ...i, ...candidato } : i)));
+  }
+
+  function aoRolar() {
+    const alvo = scrollRef.current;
+    if (alvo) setScrollPos({ left: alvo.scrollLeft, top: alvo.scrollTop });
   }
 
   // Virtualização: só monta o que intersecta a janela visível (mais margem).
   const visiveis = useMemo(() => {
     if (viewport.w === 0) return layout;
     const retVisivel = {
-      left: -pan.x - MARGEM_VIRTUALIZACAO,
-      top: -pan.y - MARGEM_VIRTUALIZACAO,
-      right: -pan.x + viewport.w + MARGEM_VIRTUALIZACAO,
-      bottom: -pan.y + viewport.h + MARGEM_VIRTUALIZACAO,
+      left: (scrollPos.left - MARGEM_VIRTUALIZACAO) / zoom,
+      top: (scrollPos.top - MARGEM_VIRTUALIZACAO) / zoom,
+      right: (scrollPos.left + viewport.w + MARGEM_VIRTUALIZACAO) / zoom,
+      bottom: (scrollPos.top + viewport.h + MARGEM_VIRTUALIZACAO) / zoom,
     };
     return layout.filter((item) => {
       const r = retanguloPx(item);
@@ -219,7 +282,7 @@ export function ModoPainel(props: PropsModo) {
         r.top + r.height > retVisivel.top
       );
     });
-  }, [layout, pan, viewport]);
+  }, [layout, scrollPos, viewport, zoom]);
 
   const mesResumo = resumo?.meses[mesAtual - 1];
   const podeEditar = editando && larga;
@@ -289,9 +352,9 @@ export function ModoPainel(props: PropsModo) {
         </p>
       )}
 
-      <div className="relative h-[calc(100vh-73px)] overflow-hidden">
+      <div className="relative h-[calc(100vh-73px)]">
         {toast && (
-          <div className="absolute right-4 top-4 z-30 rounded-lg bg-emerald-500 px-3 py-1.5 text-xs font-medium text-white shadow-lg">
+          <div className="pointer-events-none absolute right-4 top-4 z-30 rounded-lg bg-emerald-500 px-3 py-1.5 text-xs font-medium text-white shadow-lg">
             {toast}
           </div>
         )}
@@ -300,33 +363,58 @@ export function ModoPainel(props: PropsModo) {
           <CatalogoWidgets aoEscolher={adicionarWidget} aoFechar={() => setCatalogoAberto(false)} />
         )}
 
-        <button
-          onClick={centralizar}
-          title="Centralizar"
-          aria-label="Centralizar"
-          className="absolute bottom-4 right-4 z-20 flex h-10 w-10 items-center justify-center rounded-full border border-white/20 bg-roxo-900 text-white/80 shadow-lg hover:bg-roxo-800"
-        >
-          ◎
-        </button>
+        {/* Zoom e "Centralizar", no molde do canto inferior direito do Google Sheets. */}
+        <div className="absolute bottom-4 right-4 z-20 flex items-center gap-1 rounded-full border border-white/20 bg-roxo-900 px-1 py-1 shadow-lg">
+          <button
+            onClick={centralizar}
+            title="Centralizar"
+            aria-label="Centralizar"
+            className="flex h-8 w-8 items-center justify-center rounded-full text-white/80 hover:bg-white/10"
+          >
+            ◎
+          </button>
+          <div className="mx-1 h-5 w-px bg-white/15" />
+          <button
+            onClick={diminuirZoom}
+            disabled={indiceZoom <= 0}
+            aria-label="Diminuir zoom"
+            className="flex h-8 w-8 items-center justify-center rounded-full text-white/80 hover:bg-white/10 disabled:opacity-30"
+          >
+            −
+          </button>
+          <button
+            onClick={() => mudarZoom(ZOOM_PADRAO)}
+            className="w-12 rounded-full py-1 text-center text-xs text-white/70 hover:bg-white/10"
+            title="Redefinir zoom"
+          >
+            {Math.round(zoom * 100)}%
+          </button>
+          <button
+            onClick={aumentarZoom}
+            disabled={indiceZoom >= NIVEIS_ZOOM.length - 1}
+            aria-label="Aumentar zoom"
+            className="flex h-8 w-8 items-center justify-center rounded-full text-white/80 hover:bg-white/10 disabled:opacity-30"
+          >
+            +
+          </button>
+        </div>
 
         <DndContext sensors={sensores} onDragEnd={aoSoltarArrasto}>
-          {/* Janela de visualização: recorta o canvas, mas não limita até
-              onde ele existe — arrastar o fundo continua livre além disso
-              (ver ADR-0008, "sobre 'sem overflow: hidden'"). */}
-          <div
-            ref={viewportRef}
-            className="h-full w-full touch-none"
-            style={{
-              backgroundImage:
-                'linear-gradient(to right, rgba(255,255,255,0.06) 1px, transparent 1px), linear-gradient(to bottom, rgba(255,255,255,0.06) 1px, transparent 1px)',
-              backgroundSize: `${CELL_W}px ${CELL_H}px`,
-              backgroundPosition: `${pan.x}px ${pan.y}px`,
-            }}
-            {...arrastarBg}
-          >
+          {/* Área rolável de verdade: barra de scroll nativa, e é o
+              `scrollLeft`/`scrollTop` dela que ancora o zoom (ADR-0009). */}
+          <div ref={scrollRef} onScroll={aoRolar} className="h-full w-full overflow-auto">
             <div
+              ref={conteudoRef}
               className="relative"
-              style={{ transform: `translate(${pan.x}px, ${pan.y}px)` }}
+              style={{
+                width: TOTAL_COLS * CELL_W,
+                height: TOTAL_ROWS * CELL_H,
+                transform: `scale(${zoom})`,
+                transformOrigin: '0 0',
+                backgroundImage:
+                  'linear-gradient(to right, rgba(255,255,255,0.06) 1px, transparent 1px), linear-gradient(to bottom, rgba(255,255,255,0.06) 1px, transparent 1px)',
+                backgroundSize: `${CELL_W}px ${CELL_H}px`,
+              }}
             >
               {resumo &&
                 mesResumo &&
@@ -334,6 +422,7 @@ export function ModoPainel(props: PropsModo) {
                   <WidgetNoCanvas
                     key={item.id}
                     item={item}
+                    zoom={zoom}
                     editando={podeEditar}
                     aoRemover={() => removerWidget(item.id)}
                     aoRedimensionar={(w, h) => aoRedimensionar(item.id, w, h)}
@@ -359,12 +448,14 @@ export function ModoPainel(props: PropsModo) {
 /** Um widget posicionado no canvas: moldura de arrasto/remoção + o conteúdo do catálogo. */
 function WidgetNoCanvas({
   item,
+  zoom,
   editando,
   aoRemover,
   aoRedimensionar,
   children,
 }: {
   item: ItemLayout;
+  zoom: number;
   editando: boolean;
   aoRemover: () => void;
   aoRedimensionar: (largura: number, altura: number) => void;
@@ -386,7 +477,13 @@ function WidgetNoCanvas({
         top: r.top,
         width: r.width,
         height: r.height,
-        transform: transform ? `translate(${transform.x}px, ${transform.y}px)` : undefined,
+        // O delta do dnd-kit vem em pixels de tela — dividir pelo zoom
+        // devolve ao espaço não-escalado do widget (que já mora dentro do
+        // wrapper com `transform: scale(zoom)`), senão o widget "correria"
+        // mais rápido que o cursor num zoom diferente de 100%.
+        transform: transform
+          ? `translate(${transform.x / zoom}px, ${transform.y / zoom}px)`
+          : undefined,
         zIndex: isDragging ? 20 : 1,
         transition: isDragging ? undefined : 'left 120ms ease, top 120ms ease',
       }}
@@ -396,7 +493,7 @@ function WidgetNoCanvas({
           <div
             {...listeners}
             {...attributes}
-            className="absolute inset-x-0 top-0 z-10 flex cursor-move items-center justify-between rounded-t-2xl bg-black/40 px-3 py-1 text-white backdrop-blur-sm"
+            className="touch-none absolute inset-x-0 top-0 z-10 flex cursor-move items-center justify-between rounded-t-2xl bg-black/40 px-3 py-1 text-white backdrop-blur-sm"
           >
             <span className="truncate text-xs font-medium">⠿ {nome}</span>
             <button
@@ -415,6 +512,7 @@ function WidgetNoCanvas({
           <AlcaRedimensionar
             largura={item.largura}
             altura={item.altura}
+            zoom={zoom}
             aoConcluir={aoRedimensionar}
           />
         )}
@@ -427,10 +525,12 @@ function WidgetNoCanvas({
 function AlcaRedimensionar({
   largura,
   altura,
+  zoom,
   aoConcluir,
 }: {
   largura: number;
   altura: number;
+  zoom: number;
   aoConcluir: (largura: number, altura: number) => void;
 }) {
   function aoIniciar(e: ReactPointerEvent) {
@@ -438,15 +538,15 @@ function AlcaRedimensionar({
     e.preventDefault();
     const inicioX = e.clientX;
     const inicioY = e.clientY;
+    const preview = { largura, altura };
 
     function mover(ev: PointerEvent) {
-      const deltaCol = Math.round((ev.clientX - inicioX) / CELL_W);
-      const deltaLin = Math.round((ev.clientY - inicioY) / CELL_H);
+      const deltaCol = Math.round((ev.clientX - inicioX) / zoom / CELL_W);
+      const deltaLin = Math.round((ev.clientY - inicioY) / zoom / CELL_H);
       preview.largura = Math.max(1, largura + deltaCol);
       preview.altura = Math.max(1, altura + deltaLin);
     }
 
-    const preview = { largura, altura };
     function soltar() {
       window.removeEventListener('pointermove', mover);
       window.removeEventListener('pointerup', soltar);
@@ -459,7 +559,7 @@ function AlcaRedimensionar({
   return (
     <div
       onPointerDown={aoIniciar}
-      className="absolute bottom-1 right-1 z-10 h-4 w-4 cursor-se-resize rounded-sm border-b-2 border-r-2 border-white/50"
+      className="touch-none absolute bottom-1 right-1 z-10 h-4 w-4 cursor-se-resize rounded-sm border-b-2 border-r-2 border-white/50"
     />
   );
 }
@@ -500,41 +600,4 @@ function CatalogoWidgets({
       </ul>
     </div>
   );
-}
-
-/** Arrastar o fundo (fora de qualquer widget) move o pan — sem scroll nativo (ADR-0008). */
-function usePanDoFundo(
-  pan: { x: number; y: number },
-  setPan: (p: { x: number; y: number }) => void,
-) {
-  const arrastando = useRef<{ x: number; y: number; panX: number; panY: number } | null>(null);
-
-  function limitar(v: number) {
-    return Math.max(-LIMITE_PX, Math.min(LIMITE_PX, v));
-  }
-
-  function onPointerDown(e: ReactPointerEvent) {
-    if (e.target !== e.currentTarget) return; // só o fundo, não um widget
-    (e.target as HTMLElement).setPointerCapture(e.pointerId);
-    arrastando.current = { x: e.clientX, y: e.clientY, panX: pan.x, panY: pan.y };
-  }
-
-  function onPointerMove(e: ReactPointerEvent) {
-    if (!arrastando.current) return;
-    const a = arrastando.current;
-    setPan({
-      x: limitar(a.panX + (e.clientX - a.x)),
-      y: limitar(a.panY + (e.clientY - a.y)),
-    });
-  }
-
-  function onPointerUp() {
-    arrastando.current = null;
-  }
-
-  function onWheel(e: ReactWheelEvent) {
-    setPan({ x: limitar(pan.x - e.deltaX), y: limitar(pan.y - e.deltaY) });
-  }
-
-  return { onPointerDown, onPointerMove, onPointerUp, onWheel };
 }

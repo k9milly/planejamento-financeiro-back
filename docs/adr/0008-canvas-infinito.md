@@ -1,6 +1,17 @@
 # ADR-0008 — Canvas infinito no modo painel: substitui a grade do ADR-0005
 
-**Status:** proposto — **substitui o ADR-0005**
+**Status:** implementado — **refinado pelo [ADR-0009](0009-scroll-nativo-e-zoom.md)**
+
+> **Nota de atualização.** Testado de verdade, o pan por `transform` sem
+> barra de rolagem deixou a usuária sem nenhuma referência de "onde eu
+> estou" no canvas, e sem zoom não dava para ver mais ou menos coisa de
+> uma vez. O ADR-0009 troca o mecanismo de rolagem (nativa do navegador,
+> não mais `transform: translate()`) e acrescenta zoom em degraus — a
+> decisão de ter um canvas maior que a tela, com coordenadas de célula que
+> podem ser negativas e sem reflow ao soltar sobre outro widget, continua
+> valendo; só a forma de rolar por ele mudou. O resto deste documento
+> (extensão, virtualização, colisão bloqueada, `dnd-kit`) permanece a
+> descrição correta do que está implementado.
 
 ## Nota de terminologia
 
