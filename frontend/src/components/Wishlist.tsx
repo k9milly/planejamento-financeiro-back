@@ -14,6 +14,8 @@ interface Props {
   }) => Promise<void>;
   aoAtualizar: (id: number, dados: Partial<Desejo>) => Promise<void>;
   aoExcluir: (id: number) => Promise<void>;
+  /** No modo painel, quem define a altura é a célula da grade. */
+  preencher?: boolean;
 }
 
 const ESTILO_IMPORTANCIA: Record<Importancia, string> = {
@@ -37,6 +39,7 @@ export function Wishlist({
   aoCriar,
   aoAtualizar,
   aoExcluir,
+  preencher,
 }: Props) {
   const [aberto, setAberto] = useState(false);
   const [desejo, setDesejo] = useState('');
@@ -70,6 +73,7 @@ export function Wishlist({
 
   return (
     <Card
+      preencher={preencher}
       titulo="Wishlist"
       acao={
         !somenteLeitura && (

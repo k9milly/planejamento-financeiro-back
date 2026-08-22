@@ -27,6 +27,8 @@ interface Props {
   ) => Promise<void>;
   aoAlternar: (gasto: GastoFixo, pago: boolean) => Promise<void>;
   aoExcluir: (id: number) => Promise<void>;
+  /** No modo painel, quem define a altura é a célula da grade. */
+  preencher?: boolean;
 }
 
 const FORMAS_PAGAMENTO = Object.keys(ESTILO_FORMA_PAGAMENTO) as FormaPagamento[];
@@ -46,6 +48,7 @@ export function GastosFixos({
   aoAtualizar,
   aoAlternar,
   aoExcluir,
+  preencher,
 }: Props) {
   const [aberto, setAberto] = useState(false);
   const [editandoId, setEditandoId] = useState<number | null>(null);
@@ -125,6 +128,7 @@ export function GastosFixos({
 
   return (
     <Card
+      preencher={preencher}
       titulo="Gastos fixos"
       acao={
         !somenteLeitura && (

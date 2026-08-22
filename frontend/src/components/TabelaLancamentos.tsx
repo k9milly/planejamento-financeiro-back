@@ -10,6 +10,8 @@ interface Props {
   somenteLeitura: boolean;
   aoEditar: (lancamento: Lancamento) => void;
   aoExcluir: (id: number) => void;
+  /** No modo painel, quem define a altura é a célula da grade. */
+  preencher?: boolean;
 }
 
 /**
@@ -26,6 +28,7 @@ export function TabelaLancamentos({
   somenteLeitura,
   aoEditar,
   aoExcluir,
+  preencher,
 }: Props) {
   const { cores } = useCoresPagamento();
 
@@ -39,7 +42,7 @@ export function TabelaLancamentos({
   }
 
   return (
-    <Card titulo={titulo} largo>
+    <Card titulo={titulo} largo={!preencher} preencher={preencher}>
       {lancamentos.length === 0 ? (
         <p className="py-6 text-center text-sm text-roxo-300">
           Nenhum lançamento neste mês.
