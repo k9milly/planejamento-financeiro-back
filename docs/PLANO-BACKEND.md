@@ -17,7 +17,7 @@ pagamento, cartão como tipo de conta, fatura mensal) e a metade backend do
 `0006` (persistência do layout — a coluna e os dois endpoints; a UX de
 quando salvar é decisão do frontend). Specs: `docs/specs/pagamentos-e-cartoes.md`
 (detalhe completo de modelo/validação/endpoints) e a seção 2
-("Carregamento e persistência") de `docs/specs/modo-estatico-e-widgets.md`
+("Carregamento e persistência") de `docs/specs/modo-painel-e-widgets.md`
 só para saber o formato esperado do campo `layout` (uma string opaca —
 o backend não precisa entender o que tem dentro).
 

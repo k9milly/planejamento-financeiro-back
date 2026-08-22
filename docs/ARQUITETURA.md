@@ -172,7 +172,7 @@ A grade usa `react-grid-layout`; o arranjo é guardado como texto opaco em
 demanda, porque traz as duas dependências mais pesadas do projeto
 (`react-grid-layout` e Recharts) e o uso comum, no celular, é a planilha.
 
-Detalhe nos ADRs 0004–0007 e na spec `docs/specs/modo-estatico-e-widgets.md`.
+Detalhe nos ADRs 0004–0007 e na spec `docs/specs/modo-painel-e-widgets.md`.
 
 ### Como funciona a autenticação
 
