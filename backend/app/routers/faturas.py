@@ -43,6 +43,19 @@ def obter(
     db: Session = Depends(get_db),
 ) -> FaturaOut:
     cartao = _obter_cartao(cartao_id, db)
+    # A API já exige dia de vencimento para criar ou editar um cartão, então
+    # `None` aqui só aparece em dado mexido direto no banco. Vale a checagem
+    # explícita: sem ela o Pydantic devolveria um 500 opaco ao montar a
+    # resposta, que declara o campo como obrigatório.
+    if cartao.dia_vencimento_fatura is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=(
+                f"O cartão '{cartao.nome}' está sem dia de vencimento da "
+                "fatura. Edite o cartão para informá-lo."
+            ),
+        )
+
     registro = _registro(cartao.id, ano_ref.id, mes, db)
     return FaturaOut(
         cartao_id=cartao.id,
@@ -51,6 +64,7 @@ def obter(
         valor_em_aberto=_valor_em_aberto(cartao.id, mes, ano_ref, db),
         situacao=registro.situacao if registro else SituacaoGastoFixo.PENDENTE,
         lancamento_id=registro.lancamento_id if registro else None,
+        dia_vencimento=cartao.dia_vencimento_fatura,
     )
 
 

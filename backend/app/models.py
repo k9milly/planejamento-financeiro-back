@@ -160,6 +160,16 @@ class Usuario(Base):
         DateTime, nullable=False, server_default=func.now()
     )
 
+    # Como o usuário arrumou os blocos do painel. Texto opaco de propósito: é
+    # JSON gerado e lido só pelo frontend, e o backend não tem nada a decidir
+    # sobre o conteúdo — validar o formato aqui obrigaria a mudar o backend
+    # toda vez que a interface ganhasse um bloco novo. `NULL` = nunca arrumou,
+    # então o frontend usa a disposição padrão dele.
+    #
+    # Diferente de `CorFormaPagamento`, esta preferência é por usuário: a
+    # disposição da tela é de quem a arrumou, não do app inteiro.
+    layout_dashboard: Mapped[str | None] = mapped_column(Text, nullable=True)
+
 
 class Conta(Base):
     """Uma conta de verdade: Nubank, Mercado Pago, dinheiro em espécie.
