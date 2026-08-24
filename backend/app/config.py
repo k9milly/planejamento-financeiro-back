@@ -36,9 +36,16 @@ class Settings(BaseSettings):
     # quem só olhava o navegador. O parser abaixo aceita tanto o formato
     # simples (recomendado) quanto JSON, para não quebrar quem já configurou
     # do jeito antigo.
+    # As duas portas cobrem os dois frontends que existem hoje em
+    # desenvolvimento: 5173 é o Vite do frontend embutido neste repositório;
+    # 8080 é o do `planejamento-financeiro-front`, que roda por um plugin da
+    # Lovable e fixa essa porta (ver ADR-03 — o valor foi conferido rodando
+    # `npm run dev` lá, não assumido).
     cors_origins: Annotated[list[str], NoDecode] = [
         "http://localhost:5173",
         "http://127.0.0.1:5173",
+        "http://localhost:8080",
+        "http://127.0.0.1:8080",
     ]
 
     @field_validator("cors_origins", mode="before")

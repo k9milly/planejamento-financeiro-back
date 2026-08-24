@@ -21,7 +21,7 @@ detalhe de cada componente a mudar.
 > área" — diferente do que as Fases 7 e 8 abaixo descreviam originalmente
 > (uma grade responsiva via `react-grid-layout`). Elas foram reescritas
 > para refletir o ADR-0008. Nenhuma outra fase muda, e nada em
-> `docs/CONTRATO-API.md`/`docs/PLANO-BACKEND.md` muda — a correção é
+> `docs/CONTRATO-API.md`/`docs/PLANO-BACKEND-pagamentos-e-painel.md` muda — a correção é
 > inteiramente frontend (o layout sempre foi uma string opaca do ponto de
 > vista do backend).
 
@@ -40,7 +40,7 @@ verdade:
    `api.ts` devolver os dados falsos em vez de chamar `fetch`, só nas
    funções que dependem de endpoints ainda não implementados.
 3. Quando o backend entregar de verdade (ou já tiver entregue — ver
-   `docs/PLANO-BACKEND.md`), a flag sai e tudo passa a bater no servidor
+   `docs/PLANO-BACKEND-pagamentos-e-painel.md`), a flag sai e tudo passa a bater no servidor
    real, sem mudar nenhum componente — eles já foram escritos contra os
    tipos do contrato, não contra o mock.
 

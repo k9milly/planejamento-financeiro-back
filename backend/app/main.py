@@ -8,10 +8,13 @@ A documentação interativa fica em http://localhost:8000/docs
 
 from __future__ import annotations
 
+import logging
 from contextlib import asynccontextmanager
 
-from fastapi import Depends, FastAPI
+from fastapi import Depends, FastAPI, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from app.config import settings
 from app.deps import usuario_atual
@@ -53,6 +56,43 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# --------------------------------------------------------------------------- #
+# Erros: um formato só para a API inteira (ADR-01)
+#
+# Todo erro — de negócio, de validação ou inesperado — responde
+# `{"detail": "frase em português"}`. Sem isto, quem consome precisa de três
+# caminhos diferentes: string em `HTTPException`, lista de objetos em inglês
+# no 422 do Pydantic, e um 500 sem corpo previsível.
+# --------------------------------------------------------------------------- #
+
+
+# Registrado ANTES do CORS de propósito: o middleware adicionado por último é o
+# mais externo, então este fica por dentro e a resposta de erro que ele monta
+# ainda passa pelo CORS na volta.
+#
+# O ADR-01 previa `@app.exception_handler(Exception)` para este caso. Não
+# funciona sozinho: esse handler roda no `ServerErrorMiddleware` do Starlette,
+# que fica acima de todos os middlewares da aplicação — a resposta 500 sairia
+# sem os cabeçalhos de CORS, e o navegador esconderia a mensagem atrás de um
+# erro de CORS genérico, justamente quando ela mais importa. Coberto por
+# `tests/test_erros.py::test_500_chega_ao_navegador_com_cabecalho_cors`.
+@app.middleware("http")
+async def erro_inesperado(request: Request, call_next):
+    """Rede de segurança: bug ou falha de banco vira 500 com a mesma forma.
+
+    A causa real vai para o log do servidor, não para a resposta — um traceback
+    na tela contaria a estrutura interna da aplicação a quem estiver olhando.
+    """
+    try:
+        return await call_next(request)
+    except Exception:
+        logging.exception("Erro não tratado em %s %s", request.method, request.url.path)
+        return JSONResponse(
+            status_code=500,
+            content={"detail": "Erro interno. Tente novamente em instantes."},
+        )
+
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
@@ -60,6 +100,38 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+@app.exception_handler(RequestValidationError)
+async def erro_validacao(request: Request, exc: RequestValidationError):
+    """Achata o 422 do Pydantic para a mesma forma dos erros de negócio.
+
+    `campos` sobra para o formulário destacar o campo específico; quem só quer
+    mostrar um aviso lê `detail` e ignora o resto.
+    """
+    erros = exc.errors()
+    primeiro = erros[0] if erros else {}
+    mensagem = primeiro.get("msg", "Dados inválidos.")
+    # O Pydantic prefixa o que vem de `model_validator` com "Value error, ".
+    # As regras de coerência já escrevem a frase pronta, então o prefixo só
+    # atrapalha quem for ler.
+    if mensagem.startswith("Value error, "):
+        mensagem = mensagem.removeprefix("Value error, ")
+
+    return JSONResponse(
+        status_code=422,
+        content={
+            "detail": mensagem,
+            "campos": [
+                {
+                    # `loc[0]` é a origem ("body", "query"…), que não interessa
+                    # a quem preenche o formulário.
+                    "campo": ".".join(str(parte) for parte in erro["loc"][1:]),
+                    "mensagem": erro["msg"],
+                }
+                for erro in erros
+            ],
+        },
+    )
+
 
 app.include_router(auth.router)
 
