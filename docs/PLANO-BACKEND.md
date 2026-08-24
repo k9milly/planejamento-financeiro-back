@@ -67,6 +67,14 @@ em cima de uma suposição errada. Especificamente:
 - `GET /contas` devolve o campo `tipo` preenchido para permitir ao
   frontend distinguir conta corrente de cartão no `<select>` da Fase 2 do
   plano de frontend.
+- **Atualizado após a Etapa A do front** (Contas, Gastos Fixos, Fatura e
+  Wishlist já existem em código mocado, ver Parte 1 seções 8–11): conferir
+  também `POST .../{gasto_id}/meses/{mes}/pagar` e `.../desfazer` em
+  `/anos/{ano}/gastos-fixos` (idempotência: chamar `pagar` duas vezes não
+  duplica o lançamento), `GET /anos/{ano}/cartoes/{cartao_id}/fatura/{mes}`
+  e seus dois `POST` de pagar/desfazer, e `GET /anos/{ano}/wishlist/total`
+  (os três campos `total_marcado`/`total_geral`/`quantidade_marcada` batem
+  com o que a Parte 1 documenta).
 
 **Critério de aceite:** uma chamada real a cada um dos 6 endpoints listados
 no resumo da Parte 1 (`docs/specs/especificacao-tecnica-funcional.md`),
@@ -96,6 +104,33 @@ A spec **não precisou de correção**. O roteiro usado para conferir não foi
 versionado de propósito: ele depende de um usuário e de um ano de teste
 criados e removidos na hora, e repetir a checagem é mais honesto refazendo-a
 contra o estado real do que rodando um script que envelhece junto com a API.
+
+### Segunda rodada — endpoints que a Etapa A do front passou a usar
+
+Conferido num ano descartável (2098), criado e removido junto com as contas,
+os lançamentos e a wishlist de teste — os dados reais de 2026 não foram
+tocados.
+
+| Verificação | Resultado |
+| --- | --- |
+| `GastoFixoOut` | confere |
+| `gastos-fixos/.../pagar` duas vezes | mesmo lançamento, um só no mês |
+| `gastos-fixos/.../desfazer` | `204`, lançamento removido, volta a `pendente` |
+| `FaturaOut` — inclusive `dia_vencimento` | confere |
+| Valor em aberto após compra no crédito | confere (`80.00`) |
+| `fatura/.../pagar` duas vezes | mesmo lançamento, tipo `transferencia` |
+| `fatura/.../desfazer` | `204`, volta a `pendente` com o valor de volta em aberto |
+| `TotalWishlist` | confere (`300.00` de `4300.00`, 1 item) |
+
+Duas correções de documento saíram daqui, as duas em favor do que o código
+realmente faz:
+
+- **A rota da fatura é `/fatura/{mes}`, não `?mes=`.** A versão da spec que
+  veio na Etapa A tinha reintroduzido a forma com query param; confirmado que
+  ela responde `404`. Corrigido na spec (o `CONTRATO-API.md` já estava certo).
+- **`pagar` responde `201` também na segunda chamada**, não `200` como o
+  contrato afirmava. O que importa — não duplicar o lançamento — está certo.
+  Corrigido no `CONTRATO-API.md`.
 
 ## Fora desta rodada (decisões já registradas nas Partes 1 e 2, não tarefas)
 

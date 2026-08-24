@@ -155,9 +155,16 @@ Corpo (opcional):
 
 - Se omitido, usa `Conta(cartao).conta_pagamento_padrao_id`.
 - Se nenhum dos dois existir: `422 "Informe de qual conta a fatura será paga."`
-- Idempotente: chamar de novo com a fatura já paga devolve o mesmo
-  lançamento (`200`, não `201` na segunda vez — mesmo padrão de
-  `gastos-fixos/.../pagar`).
+- Idempotente: chamar de novo com a fatura já paga devolve **o mesmo
+  lançamento**, sem duplicar nada.
+
+  > **Corrigido em relação ao rascunho**, que dizia `200` na segunda chamada.
+  > A resposta é `201` nas duas vezes — o status vem fixo do decorador da
+  > rota. Conferido na execução da Fase 3, e vale igual para
+  > `gastos-fixos/.../pagar`. Não muda nada para quem consome (mesmo corpo,
+  > ambos 2xx); se um dia o rigor de REST importar, distinguir criado de
+  > já-existente é uma mudança de código pequena, mas seria uma mudança de
+  > comportamento em produção, então fica registrada e não feita.
 - Resposta: `LancamentoOut` do lançamento `transferencia` criado (ou já
   existente).
 
