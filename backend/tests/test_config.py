@@ -42,8 +42,16 @@ class TestCorsOrigins:
         assert Settings().cors_origins == ["https://c.com", "https://d.com"]
 
     def test_sem_variavel_usa_padrao_local(self, monkeypatch):
+        """O padrão cobre os dois frontends em desenvolvimento.
+
+        5173 é o Vite deste repositório; 8080 é o do
+        `planejamento-financeiro-front` (ADR-03). Sem a 8080 aqui, quem clonar
+        os dois repositórios esbarra em erro de CORS na primeira chamada.
+        """
         monkeypatch.delenv("CORS_ORIGINS", raising=False)
-        assert "http://localhost:5173" in Settings().cors_origins
+        origens = Settings().cors_origins
+        assert "http://localhost:5173" in origens
+        assert "http://localhost:8080" in origens
 
     def test_variavel_vazia_nao_quebra(self, monkeypatch):
         monkeypatch.setenv("CORS_ORIGINS", "")

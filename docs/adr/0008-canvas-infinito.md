@@ -166,7 +166,7 @@ está sendo construída agora.
 - **O backend não muda.** O contrato já tratava `layout` como uma string
   JSON opaca (`docs/CONTRATO-API.md`) — o formato interno do
   `ItemLayout` mudar (coordenadas com sinal em vez de 0–11) não exige
-  nenhum ajuste em `docs/PLANO-BACKEND.md`. Esta correção é 100% frontend.
+  nenhum ajuste em `docs/PLANO-BACKEND-pagamentos-e-painel.md`. Esta correção é 100% frontend.
 - `docs/PLANO-FRONTEND.md`, Fases 7 e 8 (motor de grade e persistência),
   precisam ser reescritas para descrever `dnd-kit` + canvas por
   transformação em vez de `react-grid-layout` — ver as fases atualizadas.
