@@ -10,13 +10,28 @@ chamada pelo navegador, fica em `/docs`. Este arquivo resume o contrato.
 - Valores monetários trafegam como **string decimal** (`"1234.56"`), nunca como
   número — ver [ARQUITETURA.md](ARQUITETURA.md#por-que-decimal-e-não-float).
 - Datas em ISO 8601 (`"2026-04-06"`).
-- Erros retornam `{"detail": "mensagem"}` (ou uma lista, em erros de validação).
+- **Todo** erro retorna `{"detail": "mensagem em português"}` — de negócio, de
+  validação ou inesperado, sempre no mesmo formato (ver
+  [ADR-01](adr/ADR-01-contrato-api-e-tratamento-erros.md)). Quem consome lê
+  sempre o mesmo campo, sem precisar saber de onde o erro veio.
 
 | Código | Significado |
 | --- | --- |
 | 404 | Recurso não existe |
 | 409 | Conflito: duplicado ou ano arquivado |
 | 422 | Dados inválidos |
+| 500 | Erro inesperado; a causa fica no log do servidor, não na resposta |
+
+Erros de validação (`422`) trazem, além de `detail`, um campo `campos` com
+`[{campo, mensagem}]` — útil para o formulário destacar o que falhou. É
+opcional: `detail` sozinho já serve para exibir um aviso.
+
+```json
+{
+  "detail": "Transferência exige a conta de destino.",
+  "campos": [{"campo": "conta_destino_id", "mensagem": "..."}]
+}
+```
 
 ## Anos
 
