@@ -1,5 +1,22 @@
 # Especificação Técnica e Funcional — Integração do frontend Lovable com o backend FastAPI
 
+## Atualização — Etapa A concluída (paridade de domínio no mock)
+
+Este documento foi revisado depois que a conversa do Claude Code responsável
+pelo `planejamento-financeiro-front` implementou, em cima de dados mocados,
+as telas que faltavam para o domínio bater com o backend: **Contas** (com
+saldo/fatura mockados, dentro de Configurações, e um bloco novo no
+Dashboard), **Gastos Fixos** (rota nova), **Wishlist** (rota nova),
+**Calendário de Vencimentos** (componente novo, embutido no Dashboard), e
+**Categorias** com CRUD de verdade. O formulário de Lançamentos também já
+tem conta, forma de pagamento e os 7 tipos — as seções 2 e 3 abaixo, que
+antes descreviam um gap, agora descrevem apenas o mapeamento para a API.
+
+Cinco seções novas (8 a 11-A) cobrem as telas que não existiam quando este
+documento foi escrito pela primeira vez. As seções 1–7 originais foram
+mantidas, com pequenas correções onde o código real ficou diferente do que
+foi só recomendado antes.
+
 ## Como este documento foi construído
 
 Antes de mapear qualquer tela, os dois repositórios foram clonados e lidos por
@@ -179,11 +196,13 @@ nunca antes de somar/comparar.
   partir de uma lista de lançamentos crua. Isso também resolve com uma
   chamada só, em vez de buscar todos os lançamentos do ano e agregar no
   navegador.
-- **Faltam os cartões de crédito na tela.** `por_cartao` existe e não tem
-  hoje nenhum widget equivalente no Lovable — é a fatura em aberto de cada
-  cartão. Não é bloqueante para esta rodada (a tela funciona sem isso), mas
-  é uma perda de informação real se ficar de fora — recomenda-se um KPI ou
-  card adicional "Fatura em aberto" na Parte 3, mesmo que simples.
+- **Feito na Etapa A:** o Dashboard ganhou uma seção "Contas" com um card
+  por conta (saldo disponível para corrente, fatura em aberto para cartão,
+  nunca somados) — exatamente o que esta seção recomendava. Na integração
+  real, **o valor de cada card não vem de `GET /contas`** (que não tem
+  campo de saldo — ver seção 8) **e sim de `por_conta`/`por_cartao` dentro
+  de `GET /anos/{ano}/resumo`**, casado pelo `conta_id`. É a mesma chamada
+  que já alimenta os KPIs do topo, só lida de novo com outra chave.
 - **"Lançamentos recentes"** pode continuar vindo de
   `GET /anos/{ano}/lancamentos?mes={mes}` (ver seção 2) ordenado por data,
   já que o resumo não traz a lista crua.
@@ -191,6 +210,15 @@ nunca antes de somar/comparar.
 ---
 
 ## 2. Lançamentos (`/lancamentos`)
+
+**Feito na Etapa A:** os quatro pontos que esta seção pedia como
+obrigatórios ou faseados já existem no mock — seletor de conta (filtrado
+por tipo conforme a forma de pagamento, igual à regra do backend), forma de
+pagamento condicional a `tipo=saida`, os 7 valores de `TipoLancamento` (não
+só entrada/saída), campo "Destino" para rendimento/perda e "Conta de
+destino" para transferência, e a coluna "Status" foi removida. A leitura
+abaixo continua valendo — é o mapeamento desses campos, já existentes no
+mock, para a API real.
 
 ### O que a tela mostra hoje (mock)
 
@@ -301,10 +329,16 @@ pontos, em ordem de impacto:
 
 ## 3. Tabela Dinâmica (`/tabela-dinamica`)
 
+**Feito na Etapa A:** o seletor "Saídas / Entradas" foi removido, seguindo
+a recomendação desta seção — a tabela é sempre de saídas agora, com um
+comentário no código (`tabela-dinamica.tsx`) explicando o porquê. A
+categoria também passou a vir de `categoriaId` (via `CategoriesProvider`),
+não mais de um nome fixo.
+
 ### O que a tela mostra hoje (mock)
 
-Pivô categoria × mês, com um seletor "Saídas / Entradas", somando
-`transactions` no cliente.
+Pivô categoria × mês, somando `transactions` no cliente, sempre sobre
+saídas.
 
 ### Mapeamento para a API real
 
@@ -357,10 +391,16 @@ calculado no cliente (`(entradas - saidas) / entradas`) a partir do
 
 ## 5. Configurações → Categorias (`/configuracoes`)
 
-### O que a tela mostra hoje (mock)
+**Feito na Etapa A:** a seção "Categorias" dentro de Configurações agora
+tem criar, editar (nome, cor, ativa/inativa via `Switch`) e excluir —
+exatamente o CRUD que esta seção pedia. O texto abaixo, escrito antes dessa
+mudança, descreve o mapeamento; a "decisão necessária" que fechava a seção
+já foi endereçada.
+
+### O que a tela mostra hoje (mock, antes da Etapa A)
 
 Uma lista somente-leitura de chips com os nomes fixos de `CATEGORIES` — não
-tem criar, editar nem apagar.
+tinha criar, editar nem apagar.
 
 ### Mapeamento para a API real
 
@@ -471,18 +511,190 @@ projeto.
 
 ---
 
+## 8. Contas (Configurações → Contas, e o bloco "Contas" do Dashboard)
+
+### O que a tela mostra hoje (mock, pós-Etapa A)
+
+Em `configuracoes.tsx`, uma seção "Contas" (`ContasSection`) com lista de
+contas (nome, cor, tipo, e para cada uma: saldo disponível ou fatura em
+aberto + situação pago/pendente do mês selecionado), criar/editar via
+Dialog, excluir, e um botão "Pagar fatura" por cartão (Dialog próprio,
+100% mock — `faturasPagas` é um `useState` local por
+`${contaId}-${year}-${month}`, comentado no código como provisório). O
+Dashboard (`index.tsx`) tem o bloco de cards por conta descrito na seção 1.
+
+### Mapeamento para a API real
+
+Contas em si:
+
+```ts
+interface ContaCriar {
+  nome: string;
+  cor?: string;
+  ordem?: number;
+  tipo?: "corrente" | "cartao_credito";       // default "corrente"
+  dia_vencimento_fatura?: number | null;       // obrigatório quando tipo=cartao_credito
+  conta_pagamento_padrao_id?: number | null;
+}
+interface ContaOut {
+  id: number;
+  nome: string;
+  cor: string;
+  ordem: number;
+  ativa: boolean;
+  tipo: "corrente" | "cartao_credito";
+  dia_vencimento_fatura: number | null;
+  conta_pagamento_padrao_id: number | null;
+}
+```
+
+`GET`/`POST /contas`, `PATCH /contas/{id}`, `DELETE /contas/{id}`
+(desativa se em uso). **Nenhum desses campos inclui saldo** — a ausência
+do mock (`saldo`, `faturaEmAberto` direto no objeto `Conta`) foi uma
+simplificação deliberada e correta para o mock, mas não existe assim na
+API real: saldo e fatura em aberto vêm de `GET /anos/{ano}/resumo`
+(`por_conta`/`por_cartao`, ver seção 1), casados pelo `conta_id`. A tela
+real precisa de duas fontes de dado — `useContas()` para a lista/CRUD,
+`useResumo(ano)` para os números — não uma.
+
+Fatura do cartão (o botão "Pagar fatura"):
+
+```ts
+interface FaturaOut {
+  cartao_id: number; ano: number; mes: number;
+  valor_em_aberto: string;              // Decimal como string
+  situacao: "pendente" | "pago";
+  lancamento_id: number | null;
+  dia_vencimento: number;
+}
+```
+
+- `GET /anos/{ano}/cartoes/{cartao_id}/fatura/{mes}` — situação real
+  (o mock aproxima isso com `faturasPagas` local; a integração troca por
+  esta chamada, uma por cartão). **O mês vai no caminho, não em `?mes=`** —
+  é o que a API implementa e o que casa com `pagar`/`desfazer` logo abaixo
+  (mesma correção já registrada em `docs/CONTRATO-API.md`).
+- `POST /anos/{ano}/cartoes/{cartao_id}/fatura/{mes}/pagar` — corpo
+  opcional `{ conta_pagamento_id?: number }`; idempotente. É o que o botão
+  "Confirmar pagamento" do Dialog `pagando` deve chamar, no lugar do
+  `setFaturasPagas` mock.
+- `POST /anos/{ano}/cartoes/{cartao_id}/fatura/{mes}/desfazer` — `204`,
+  sem corpo.
+
+Nenhuma decisão de produto pendente aqui — é wiring direto.
+
+---
+
+## 9. Gastos Fixos (`/gastos-fixos`)
+
+### O que a tela mostra hoje (mock, pós-Etapa A)
+
+Rota nova, lista de gastos fixos com checkbox "Pago" por linha (referente
+ao mês selecionado no filtro do cabeçalho — ou ao mês corrente, quando o
+filtro está em "Ano inteiro"), Dialog de criar/editar, exclusão.
+
+### Mapeamento para a API real
+
+```ts
+interface GastoFixoCriar {
+  descricao: string;
+  valor: string;
+  dia_vencimento?: number;               // default 1
+  forma_pagamento?: "credito" | "debito" | "pix" | "dinheiro" | null;
+  categoria_id?: number | null;
+  conta_id: number;
+}
+interface GastoFixoMensalOut { mes: number; situacao: "pendente" | "pago"; lancamento_id: number | null; }
+interface GastoFixoOut {
+  id: number; ano_id: number; descricao: string; valor: string;
+  dia_vencimento: number;
+  forma_pagamento: "credito" | "debito" | "pix" | "dinheiro" | null;
+  categoria_id: number | null; conta_id: number; ativo: boolean;
+  meses: GastoFixoMensalOut[];
+}
+```
+
+- `GET /anos/{ano}/gastos-fixos`, `POST` (cria), `PATCH /{id}`, `DELETE
+  /{id}` (remove o modelo; lançamentos já gerados por ele permanecem).
+- **O checkbox "Pago" não é um PATCH de campo — são dois endpoints
+  próprios**, que criam/removem o lançamento de verdade:
+  `POST /anos/{ano}/gastos-fixos/{gasto_id}/meses/{mes}/pagar` (`201`,
+  devolve o `LancamentoOut` criado; idempotente — chamar de novo com o mês
+  já pago devolve o mesmo lançamento) e
+  `POST /anos/{ano}/gastos-fixos/{gasto_id}/meses/{mes}/desfazer` (`204`,
+  apaga o lançamento gerado). O `marcarSituacao(id, mes, situacao)` do
+  `GastosFixosProvider` mock vira, na integração, essas duas chamadas — não
+  uma atualização de campo local.
+- `forma_pagamento_legado` (campo de texto livre do backend, ver
+  `CONTRATO-API.md` do repo back) não tem equivalente no mock e não
+  precisa ganhar um agora — é só histórico de importação antiga.
+
+---
+
+## 10. Wishlist (`/wishlist`)
+
+### O que a tela mostra hoje (mock, pós-Etapa A)
+
+Rota nova: lista de desejos com checkbox "somar", badge de importância,
+marcar comprado, criar/editar/excluir, e um rodapé comparando o total
+marcado (não comprado) com um `totalGuardadoMock` fixo.
+
+### Mapeamento para a API real
+
+```ts
+interface DesejoCriar {
+  desejo: string; valor?: string;
+  importancia?: "alta" | "media" | "baixa";  // default "media"
+  somar?: boolean;
+}
+interface DesejoOut {
+  id: number; ano_id: number; desejo: string; valor: string;
+  importancia: "alta" | "media" | "baixa"; somar: boolean; comprado: boolean;
+}
+interface TotalWishlist { total_marcado: string; total_geral: string; quantidade_marcada: number; }
+```
+
+- `GET /anos/{ano}/wishlist`, `POST`, `PATCH /{id}` (inclui marcar
+  `comprado`), `DELETE /{id}`.
+- `GET /anos/{ano}/wishlist/total` — substitui o cálculo local
+  `items.filter(...).reduce(...)` que a tela faz hoje; já vem pronto do
+  backend, não precisa ser recalculado no cliente.
+- **O "total guardado" do rodapé (`totalGuardadoMock`) não tem endpoint
+  próprio** — é a soma de `guardado` por conta corrente, que já existe em
+  `ResumoAnoOut.por_conta[].guardado` (o mesmo `GET /anos/{ano}/resumo` do
+  Dashboard). A integração troca a constante mock por essa soma, sem
+  precisar de nenhum endpoint novo.
+
+---
+
+## 11. Calendário de Vencimentos (componente embutido no Dashboard)
+
+Não é uma tela própria — é `CalendarioVencimentos.tsx`, renderizado dentro
+do Dashboard. Já lê de `useGastosFixos()`/`useAccounts()`, então, na
+integração, passa a ler dos mesmos hooks de React Query das seções 8 e 9
+(`useGastosFixos(ano)`/`useContas()`) — nenhum endpoint novo, nenhuma
+mudança de lógica de marcação de dia, só troca a origem dos dois arrays que
+já consome.
+
+---
+
 ## Resumo — todos os endpoints usados por esta integração
 
 | Método | Rota | Usado por |
 | --- | --- | --- |
 | `POST` | `/auth/login` | Login |
 | `GET` | `/auth/eu` | Verificação de sessão na abertura do app |
-| `GET` | `/anos/{ano}/resumo` | Dashboard, Tabela Dinâmica, Mês-detalhe |
+| `GET` | `/anos/{ano}/resumo` | Dashboard, Tabela Dinâmica, Mês-detalhe, saldo/fatura por conta (seção 8), total guardado da Wishlist (seção 10) |
 | `GET`/`POST`/`PATCH`/`DELETE` | `/anos/{ano}/lancamentos` | Lançamentos, Mês-detalhe |
-| `GET`/`POST`/`PATCH`/`DELETE` | `/categorias` | Configurações → Categorias, e alimenta o `<select>` de categoria em Lançamentos |
-| `GET` | `/contas` | Alimenta o `<select>` de conta em Lançamentos (obrigatório, ver seção 2) |
+| `GET`/`POST`/`PATCH`/`DELETE` | `/categorias` | Configurações → Categorias, e alimenta o `<select>` de categoria em Lançamentos e Gastos Fixos |
+| `GET`/`POST`/`PATCH`/`DELETE` | `/contas` | Configurações → Contas, e alimenta o `<select>` de conta em Lançamentos e Gastos Fixos |
+| `GET`/`POST`/`{mes}/pagar`/`{mes}/desfazer` | `/anos/{ano}/cartoes/{cartao_id}/fatura` | Botão "Pagar fatura" em Configurações → Contas |
+| `GET`/`POST`/`PATCH`/`DELETE`/`{gasto_id}/meses/{mes}/pagar`/`.../desfazer` | `/anos/{ano}/gastos-fixos` | Gastos Fixos, Calendário de Vencimentos |
+| `GET`/`POST`/`PATCH`/`DELETE`, `GET .../total` | `/anos/{ano}/wishlist` | Wishlist |
 
-Nenhum endpoint novo é necessário no backend para esta rodada — o gap está
-inteiramente do lado do frontend (campos que faltam nos formulários) e de
-duas telas (`Metas & Orçamentos`, parte de `Configurações`) que dependem de
-domínio que o backend deliberadamente ainda não tem.
+Nenhum endpoint novo é necessário no backend para esta rodada — todos os
+que as telas da Etapa A precisam (Contas, Fatura, Gastos Fixos, Wishlist)
+já existem e já foram conferidos linha a linha contra o código real do
+backend. O gap que resta é só `Metas & Orçamentos` e parte de
+`Configurações` (perfil/alertas), que continuam dependendo de domínio que o
+backend deliberadamente ainda não tem (seções 6 e 7).
