@@ -40,9 +40,32 @@ da mudança e corrigir os que quebrarem, não só os óbvios.
 **O quê:** confirmar a porta de desenvolvimento real do
 `planejamento-financeiro-front` (`npm run dev` nesse repositório, verificar
 a porta impressa no terminal — não assumir 5173, ver ADR-03) e adicionar ao
-`.env` local e ao `CORS_ORIGINS` de produção (Fly.io:
-`flyctl secrets set CORS_ORIGINS="http://localhost:5173,https://<url-do-front>"`,
-mantendo as origens que já existiam se o frontend antigo continuar em uso).
+`.env` local e ao `CORS_ORIGINS` de produção.
+
+**Dev local: feito.** A porta é **8080**, fixada pelo plugin da Lovable
+(conferida rodando `npm run dev`, não assumida). Está no padrão de
+`app/config.py`, junto com a 5173 do frontend deste repositório, e travada
+por teste em `tests/test_config.py`.
+
+**Produção: pendente, e agora desbloqueada.** O primeiro deploy no
+Cloudflare Workers (ver ADR-04) já aconteceu, e a URL é definitiva:
+`https://planejamento-financeiro-front.kamillyrosarosa1-816.workers.dev`.
+
+O comando precisa **somar** a origem nova às que já existem, nunca
+substituir a lista inteira — o frontend antigo (Netlify) continua no ar e
+sairia do ar em silêncio. Como `flyctl secrets list` mostra só o digest, o
+valor atual tem de ser lido antes (`flyctl ssh console -C "printenv
+CORS_ORIGINS"`), e só então:
+
+```
+flyctl secrets set CORS_ORIGINS="<valor-atual>,https://planejamento-financeiro-front.kamillyrosarosa1-816.workers.dev"
+```
+
+Sem colchetes e sem aspas internas — o formato JSON antigo já derrubou a
+produção uma vez (ver `app/config.py`). Definir um segredo **reinicia a
+aplicação**. Se um domínio próprio for anexado depois pelo painel do Worker,
+o comando roda de novo somando a nova URL (a `workers.dev` não precisa
+sair).
 
 **Por que depois da Fase 1:** não depende dela, mas é mais rápido de
 verificar já com o frontend rodando localmente — faz sentido sequenciar
