@@ -569,13 +569,19 @@ interface FaturaOut {
 }
 ```
 
-- `GET /anos/{ano}/cartoes/{cartao_id}/fatura/{mes}` — situação real
-  (o mock aproxima isso com `faturasPagas` local; a integração troca por
-  esta chamada, uma por cartão). **O mês vai no caminho, não em `?mes=`** —
-  é o que a API implementa e o que casa com `pagar`/`desfazer` logo abaixo
-  (mesma correção já registrada em `docs/CONTRATO-API.md`).
+- `GET /anos/{ano}/cartoes/{cartao_id}/fatura/{mes}` — situação real (o
+  mock aproxima isso com `faturasPagas` local; a integração troca por esta
+  chamada, uma por cartão). **`{mes}` é parte do caminho, não query
+  string** — corrigido depois de uma verificação real contra a API feita
+  pela conversa do backend (branch `spec-etapa-a-e-validacao-extra`); a
+  versão anterior deste documento tinha `?mes={mes}` por engano, herdado de
+  uma inconsistência que já existia em `CONTRATO-API.md` desde antes desta
+  rodada.
 - `POST /anos/{ano}/cartoes/{cartao_id}/fatura/{mes}/pagar` — corpo
-  opcional `{ conta_pagamento_id?: number }`; idempotente. É o que o botão
+  opcional `{ conta_pagamento_id?: number }`; idempotente (chamar de novo
+  com a fatura já paga devolve o mesmo lançamento, sem duplicar — a
+  segunda chamada também responde `201`, não `200`, o status vem fixo do
+  decorador da rota; não muda nada para quem consome). É o que o botão
   "Confirmar pagamento" do Dialog `pagando` deve chamar, no lugar do
   `setFaturasPagas` mock.
 - `POST /anos/{ano}/cartoes/{cartao_id}/fatura/{mes}/desfazer` — `204`,
