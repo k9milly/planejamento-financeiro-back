@@ -144,13 +144,18 @@ concorrentes, a decisão deve ser revista.
 
 ### Por que os tipos TypeScript são escritos à mão
 
-`frontend/src/types/api.ts` espelha `backend/app/schemas.py` manualmente. Para
-um projeto deste tamanho, gerar os tipos a partir do OpenAPI adicionaria uma
-etapa de build e uma dependência para economizar poucas dezenas de linhas.
+O frontend espelha `backend/app/schemas.py` manualmente, em vez de gerar os
+tipos a partir do OpenAPI — para um projeto deste tamanho, a geração
+adicionaria uma etapa de build e uma dependência para economizar poucas dezenas
+de linhas. Se o número de endpoints crescer muito, vale reconsiderar
+(`openapi-typescript`).
 
-O risco é os dois arquivos divergirem — por isso ambos têm um comentário no
-topo apontando um para o outro. Se o número de endpoints crescer muito, vale
-migrar para geração automática (`openapi-typescript`).
+O risco é os dois lados divergirem. Enquanto front e back moravam neste mesmo
+repositório, isso era controlado por um comentário em cada arquivo apontando
+para o outro. **Depois da separação em dois repositórios, quem cumpre esse
+papel é o `docs/CONTRATO-API.md`** — mudar um campo aqui só está completo
+depois de atualizá-lo, senão o outro repositório implementa contra uma versão
+que não existe mais.
 
 ### Forma de pagamento, cartões de crédito e fatura
 

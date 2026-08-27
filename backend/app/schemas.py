@@ -1,7 +1,10 @@
 """Schemas Pydantic: o contrato da API.
 
-Os tipos aqui são a fonte da verdade para os tipos TypeScript do frontend
-(`frontend/src/types/api.ts`) — ao mexer em um, mexa no outro.
+Os tipos aqui são a fonte da verdade do que a API expõe. O frontend vive em
+outro repositório e escreve os tipos dele à mão a partir de
+`docs/CONTRATO-API.md` — então **mudar um campo aqui só está completo depois
+de atualizar aquele documento**, senão o outro lado implementa contra uma
+versão que não existe mais.
 """
 
 from __future__ import annotations

@@ -105,15 +105,11 @@ em `http://localhost:8000/docs`.
 
 ### Frontend
 
-Em outro terminal:
-
-```bash
-cd frontend
-npm install
-npm run dev
-```
-
-A interface abre em `http://localhost:5173`.
+A interface fica em
+[outro repositório](https://github.com/k9milly/Planejamento-financeiro-frontend)
+— clone-o à parte e siga o README de lá. Ele espera esta API rodando, e o
+endereço dela vai em `VITE_API_URL` (ver
+[`docs/adr/ADR-03-cors-auth-env.md`](docs/adr/ADR-03-cors-auth-env.md)).
 
 ### Primeiro usuário
 
@@ -182,18 +178,16 @@ backend/
     importar_planilha.py   Importa o .xlsx para o banco
     corrigir_planilha.py   Gera cópia corrigida do .xlsx
   tests/               Testes de regras e de API
-
-frontend/
-  src/
-    App.tsx            Sessão, busca de dados e escolha do modo de exibição
-    pages/             Um arquivo por modo: ModoPlanilha e ModoEstatico
-    components/        Um componente por container da tela
-    components/widgets/  Catálogo de blocos do modo painel
-    lib/api.ts         Cliente HTTP
-    lib/formato.ts     Formatação em pt-BR
-    lib/layoutDashboard.ts  Layout do painel: padrão, validação e cópia local
-    types/api.ts       Tipos espelhando os schemas do backend
 ```
+
+O frontend **não mora mais neste repositório**. Ele vive em
+[`Planejamento-financeiro-frontend`](https://github.com/k9milly/Planejamento-financeiro-frontend),
+publicado no Cloudflare Workers, e consome esta API pelo contrato descrito em
+[`docs/CONTRATO-API.md`](docs/CONTRATO-API.md).
+
+Até agosto de 2026 havia aqui um segundo frontend, servido pelo Netlify, que o
+novo substituiu e que foi desligado. O código dele continua acessível pelo
+histórico do git, e `docs/HOSPEDAGEM.md` guarda o registro daquela hospedagem.
 
 ## Testes
 
@@ -204,13 +198,6 @@ python -m pytest
 
 A suíte cobre as regras de cálculo isoladamente (incluindo precisão decimal) e
 o comportamento da API de ponta a ponta contra um banco temporário.
-
-Verificação de tipos do frontend:
-
-```bash
-cd frontend
-npm run lint
-```
 
 ## Documentação adicional
 
