@@ -241,6 +241,19 @@ Calculado sob demanda, sem tabela própria. Ordenado por urgência. O que já
 venceu não aparece, e `valor` vem nulo nas faturas (o valor exato depende do
 cálculo do mês — use o endpoint da fatura).
 
+A resposta tem **dois formatos**, escolhidos por `tipo`, cada um usando os
+nomes que aquela origem já tem no resto da API — `dia_vencimento`/`nome` para
+o gasto fixo, `dia_vencimento_fatura`/`nome_cartao` para o cartão:
+
+```json
+[
+  {"tipo": "gasto_fixo", "gasto_fixo_id": 3, "nome": "Internet",
+   "dia_vencimento": 10, "dias_restantes": 2, "valor": "54.17"},
+  {"tipo": "fatura", "cartao_id": 5, "nome_cartao": "Nubank",
+   "dia_vencimento_fatura": 12, "dias_restantes": 3, "valor": null}
+]
+```
+
 ## Infraestrutura
 
 ### `GET /saude`

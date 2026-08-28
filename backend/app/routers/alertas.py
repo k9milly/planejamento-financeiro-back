@@ -24,7 +24,7 @@ from app.models import (
     SituacaoGastoFixo,
     TipoConta,
 )
-from app.schemas import AlertaOut
+from app.schemas import AlertaFaturaOut, AlertaGastoFixoOut, AlertaOut
 
 router = APIRouter(prefix="/alertas", tags=["alertas"])
 
@@ -50,12 +50,21 @@ def listar(db: Session = Depends(get_db)) -> list[AlertaOut]:
         # Ano corrente ainda não criado: não há vencimento a acompanhar.
         return []
 
-    alertas = [
+    alertas: list[AlertaOut] = [
         *_de_gastos_fixos(ano_ref, hoje, db),
         *_de_faturas(ano_ref, hoje, db),
     ]
     # Mais perto de vencer primeiro — é a ordem em que a pessoa precisa agir.
-    return sorted(alertas, key=lambda a: (a.dias_restantes, a.nome))
+    # O nome desempata, e vem de campos diferentes conforme a origem.
+    return sorted(alertas, key=lambda a: (a.dias_restantes, _rotulo(a)))
+
+
+def _rotulo(alerta: AlertaOut) -> str:
+    return (
+        alerta.nome
+        if isinstance(alerta, AlertaGastoFixoOut)
+        else alerta.nome_cartao
+    )
 
 
 def _dias_ate(dia_vencimento: int, hoje: date) -> int | None:
@@ -71,7 +80,9 @@ def _dias_ate(dia_vencimento: int, hoje: date) -> int | None:
     return dias if 0 <= dias <= JANELA_DIAS else None
 
 
-def _de_gastos_fixos(ano_ref: Ano, hoje: date, db: Session) -> list[AlertaOut]:
+def _de_gastos_fixos(
+    ano_ref: Ano, hoje: date, db: Session
+) -> list[AlertaGastoFixoOut]:
     pagos = {
         registro.gasto_fixo_id
         for registro in db.query(GastoFixoMensal).filter(
@@ -90,19 +101,18 @@ def _de_gastos_fixos(ano_ref: Ano, hoje: date, db: Session) -> list[AlertaOut]:
         if dias is None:
             continue
         alertas.append(
-            AlertaOut(
-                tipo="gasto_fixo",
+            AlertaGastoFixoOut(
+                gasto_fixo_id=gasto.id,
                 nome=gasto.descricao,
                 dia_vencimento=gasto.dia_vencimento,
                 dias_restantes=dias,
                 valor=gasto.valor,
-                gasto_fixo_id=gasto.id,
             )
         )
     return alertas
 
 
-def _de_faturas(ano_ref: Ano, hoje: date, db: Session) -> list[AlertaOut]:
+def _de_faturas(ano_ref: Ano, hoje: date, db: Session) -> list[AlertaFaturaOut]:
     pagas = {
         registro.cartao_id
         for registro in db.query(FaturaMensal).filter(
@@ -125,16 +135,15 @@ def _de_faturas(ano_ref: Ano, hoje: date, db: Session) -> list[AlertaOut]:
         if dias is None:
             continue
         alertas.append(
-            AlertaOut(
-                tipo="fatura",
-                nome=cartao.nome,
-                dia_vencimento=cartao.dia_vencimento_fatura,
+            AlertaFaturaOut(
+                cartao_id=cartao.id,
+                nome_cartao=cartao.nome,
+                dia_vencimento_fatura=cartao.dia_vencimento_fatura,
                 dias_restantes=dias,
-                # O valor da fatura depende do cálculo do mês inteiro; quem
+                # O valor em aberto depende do cálculo do mês inteiro; quem
                 # precisa do número exato chama o endpoint da fatura. Aqui o
                 # alerta é sobre a data, não sobre o valor.
                 valor=None,
-                cartao_id=cartao.id,
             )
         )
     return alertas
