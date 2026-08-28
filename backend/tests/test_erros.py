@@ -150,3 +150,20 @@ class TestErroInesperado:
         assert "access-control-allow-origin" in {
             k.lower() for k in resposta.headers
         }, "o navegador vai reportar erro de CORS em vez de mostrar a mensagem"
+
+    def test_campos_tambem_perdem_o_prefixo(self, cliente):
+        """A limpeza vale para `campos`, não só para `detail`.
+
+        Quem usa a lista para destacar o campo errado mostra a mesma frase de
+        quem lê só o `detail` — sem "Value error," aparecendo em um e não no
+        outro.
+        """
+        resposta = cliente.post(
+            "/metas-poupanca", json={"tipo": "prazo", "valor_alvo": "6000"}
+        )
+        assert resposta.status_code == 422
+
+        corpo = resposta.json()
+        assert not corpo["detail"].startswith("Value error")
+        for campo in corpo["campos"]:
+            assert not campo["mensagem"].startswith("Value error"), campo

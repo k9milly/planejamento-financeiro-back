@@ -103,7 +103,7 @@ def arquivar_ano(
             detail=f"O ano {ano_ref.ano} já está arquivado.",
         )
 
-    meses = _calcular(ano_ref, db)
+    meses = totais_do_ano(ano_ref, db)
     # Inclui cartões: a dívida em aberto também precisa encadear para o ano
     # seguinte, do mesmo jeito que o saldo de uma conta corrente.
     fechamento = {**meses[-1].por_conta, **meses[-1].por_cartao}
@@ -160,7 +160,7 @@ def resumo_do_ano(
     ano_ref: Ano = Depends(obter_ano), db: Session = Depends(get_db)
 ) -> ResumoAnoOut:
     """Uma única chamada devolve tudo que as 12 páginas precisam."""
-    meses = _calcular(ano_ref, db)
+    meses = totais_do_ano(ano_ref, db)
     contas = {c.id: c for c in db.query(Conta).order_by(Conta.ordem, Conta.nome)}
 
     def por_conta(carteiras: dict[int, Carteiras]) -> list[CarteirasContaOut]:
@@ -278,8 +278,14 @@ def aberturas_do_ano(ano_ref: Ano, db: Session) -> dict[int, Carteiras]:
     return aberturas
 
 
-def _calcular(ano_ref: Ano, db: Session):
-    """Carrega os lançamentos do ano (com categoria) e roda o cálculo."""
+def totais_do_ano(ano_ref: Ano, db: Session):
+    """Carrega os lançamentos do ano (com categoria) e roda o cálculo.
+
+    Pública porque `routers/metas_poupanca.py` também precisa dela: o progresso
+    de uma meta é medido contra o mesmo `guardado` que o resumo do ano mostra.
+    Recalcular aquilo por fora seria manter duas contas do mesmo número, que
+    mais cedo ou mais tarde discordariam entre si (ADR-06).
+    """
     lancamentos = (
         db.query(Lancamento)
         .options(joinedload(Lancamento.categoria))

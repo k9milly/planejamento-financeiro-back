@@ -21,6 +21,7 @@ from app.models import (
     SituacaoGastoFixo,
     TipoConta,
     TipoLancamento,
+    TipoMetaPoupanca,
 )
 
 
@@ -535,3 +536,81 @@ class ResumoAnoOut(BaseModel):
     por_conta: list[CarteirasContaOut]
     por_cartao: list[CarteirasContaOut]
     meses: list[ResumoMesOut]
+
+
+# --------------------------------------------------------------------------- #
+# Metas de poupança e alertas (ADR-06)
+# --------------------------------------------------------------------------- #
+class MetaPoupancaCriar(BaseModel):
+    tipo: TipoMetaPoupanca
+    valor_alvo: Decimal = Field(gt=0, max_digits=12, decimal_places=2)
+    data_alvo: date | None = None
+
+    @model_validator(mode="after")
+    def _coerencia_do_tipo(self) -> "MetaPoupancaCriar":
+        """Uma meta com prazo sem data não tem contra o que medir; uma meta
+        mensal com data sugere um prazo que ela não respeita."""
+        if self.tipo is TipoMetaPoupanca.PRAZO and self.data_alvo is None:
+            raise ValueError("Uma meta com prazo precisa de uma data-alvo.")
+        if self.tipo is TipoMetaPoupanca.MENSAL and self.data_alvo is not None:
+            raise ValueError("Uma meta mensal não tem data-alvo.")
+        return self
+
+
+class MetaPoupancaOut(_Base):
+    id: int
+    tipo: TipoMetaPoupanca
+    valor_alvo: Decimal
+    data_alvo: date | None
+    criada_em: datetime
+    ativa: bool
+
+
+class ProgressoMetaMensalOut(BaseModel):
+    """Quanto do alvo do mês corrente já foi guardado."""
+
+    id: int
+    valor_alvo: Decimal
+    guardado_no_mes: Decimal
+    # Pode passar de 100 quando se guarda mais que o alvo — não é limitado de
+    # propósito: bater 130% da meta é informação, não erro.
+    percentual: float
+
+
+class ProgressoMetaPrazoOut(BaseModel):
+    """Quanto do alvo já foi acumulado, e quanto tempo resta."""
+
+    id: int
+    valor_alvo: Decimal
+    data_alvo: date
+    guardado_acumulado: Decimal
+    percentual: float
+    # Negativo quando a data já passou e a meta segue ativa — a interface
+    # decide como mostrar isso; o backend não esconde o atraso.
+    dias_restantes: int
+
+
+class MetasAtivasOut(BaseModel):
+    """As duas metas que podem estar valendo ao mesmo tempo, com o progresso
+    já calculado. `null` no lugar de uma delas = não existe meta ativa
+    daquele tipo."""
+
+    mensal: ProgressoMetaMensalOut | None
+    prazo: ProgressoMetaPrazoOut | None
+
+
+class AlertaOut(BaseModel):
+    """Uma conta a vencer que ainda não foi paga.
+
+    `tipo` diz qual das duas origens gerou o alerta, e só um dos dois pares de
+    identificação vem preenchido: `gasto_fixo_id` ou `cartao_id`.
+    """
+
+    tipo: str
+    nome: str
+    dia_vencimento: int
+    # 0 = vence hoje. Nunca negativo: vencido não entra na janela (ver router).
+    dias_restantes: int
+    valor: Decimal | None
+    gasto_fixo_id: int | None = None
+    cartao_id: int | None = None

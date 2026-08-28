@@ -200,6 +200,47 @@ texto livre de antes do enum existir, mantido só para exibição.
 | `PATCH` | `/anos/{ano}/wishlist/{id}` | Atualização parcial |
 | `DELETE` | `/anos/{ano}/wishlist/{id}` | Remove o item |
 
+## Perfil
+
+| Método | Rota | Descrição |
+| --- | --- | --- |
+| `GET` | `/auth/eu` | `{ id, email, nome, alertas_email_ativo }` |
+| `PATCH` | `/auth/eu` | Edita `nome` e `alertas_email_ativo` de quem está logado |
+
+`nome` é opcional (`null` = nunca preencheu; a interface cai no e-mail). Nome
+só com espaços volta a `null`.
+
+`alertas_email_ativo` **ainda não tem efeito**: o backend não envia e-mail —
+não há serviço de envio nem processo agendado. O campo guarda a preferência
+para quando essa fase existir (ADR-06).
+
+## Metas de poupança
+
+Duas formas, que convivem: `mensal` (contra o guardado do mês) e `prazo`
+(contra o acumulado, até uma data). No máximo **uma ativa por tipo** — criar
+outra do mesmo tipo desativa a anterior, que vira histórico.
+
+| Método | Rota | Descrição |
+| --- | --- | --- |
+| `GET` | `/metas-poupanca` | Ativas; `?incluir_inativas=true` traz o histórico |
+| `POST` | `/metas-poupanca` | `{ "tipo": "prazo", "valor_alvo": "6000", "data_alvo": "2027-12-31" }` |
+| `GET` | `/metas-poupanca/ativas` | As em vigor, com progresso calculado |
+| `DELETE` | `/metas-poupanca/{id}` | Desativa (não apaga) |
+
+`prazo` exige `data_alvo`; `mensal` a recusa. O progresso sai da mesma
+agregação de `guardado` que alimenta `/anos/{ano}/resumo` — nunca é
+recalculado à parte, e nunca é guardado em coluna.
+
+## Alertas
+
+| Método | Rota | Descrição |
+| --- | --- | --- |
+| `GET` | `/alertas` | Gastos fixos e faturas a vencer em até 3 dias, não pagos |
+
+Calculado sob demanda, sem tabela própria. Ordenado por urgência. O que já
+venceu não aparece, e `valor` vem nulo nas faturas (o valor exato depende do
+cálculo do mês — use o endpoint da fatura).
+
 ## Infraestrutura
 
 ### `GET /saude`
