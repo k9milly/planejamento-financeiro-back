@@ -19,6 +19,7 @@ from fastapi.responses import JSONResponse
 from app.config import settings
 from app.deps import usuario_atual
 from app.routers import (
+    alertas,
     anos,
     auth,
     categorias,
@@ -27,6 +28,7 @@ from app.routers import (
     gastos_fixos,
     importacao,
     lancamentos,
+    metas_poupanca,
     preferencias,
     regras,
     wishlist,
@@ -100,6 +102,17 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+def _sem_prefixo_do_pydantic(mensagem: str) -> str:
+    """O Pydantic prefixa o que vem de `model_validator` com "Value error, ".
+
+    As regras de negócio já escrevem a frase pronta para exibição, então o
+    prefixo só vaza vocabulário de biblioteca para a tela. Aplicado tanto ao
+    `detail` quanto a cada item de `campos` — quem usa a lista para destacar
+    o campo errado mostra a mesma frase de quem lê só o `detail`.
+    """
+    return mensagem.removeprefix("Value error, ")
+
+
 @app.exception_handler(RequestValidationError)
 async def erro_validacao(request: Request, exc: RequestValidationError):
     """Achata o 422 do Pydantic para a mesma forma dos erros de negócio.
@@ -109,12 +122,7 @@ async def erro_validacao(request: Request, exc: RequestValidationError):
     """
     erros = exc.errors()
     primeiro = erros[0] if erros else {}
-    mensagem = primeiro.get("msg", "Dados inválidos.")
-    # O Pydantic prefixa o que vem de `model_validator` com "Value error, ".
-    # As regras de coerência já escrevem a frase pronta, então o prefixo só
-    # atrapalha quem for ler.
-    if mensagem.startswith("Value error, "):
-        mensagem = mensagem.removeprefix("Value error, ")
+    mensagem = _sem_prefixo_do_pydantic(primeiro.get("msg", "Dados inválidos."))
 
     return JSONResponse(
         status_code=422,
@@ -123,9 +131,11 @@ async def erro_validacao(request: Request, exc: RequestValidationError):
             "campos": [
                 {
                     # `loc[0]` é a origem ("body", "query"…), que não interessa
-                    # a quem preenche o formulário.
+                    # a quem preenche o formulário. Vazio quando o erro é do
+                    # modelo inteiro (regra de coerência entre campos), não de
+                    # um campo só.
                     "campo": ".".join(str(parte) for parte in erro["loc"][1:]),
-                    "mensagem": erro["msg"],
+                    "mensagem": _sem_prefixo_do_pydantic(erro["msg"]),
                 }
                 for erro in erros
             ],
@@ -150,6 +160,8 @@ app.include_router(wishlist.router, dependencies=protegido)
 app.include_router(regras.router, dependencies=protegido)
 app.include_router(importacao.router, dependencies=protegido)
 app.include_router(preferencias.router, dependencies=protegido)
+app.include_router(metas_poupanca.router, dependencies=protegido)
+app.include_router(alertas.router, dependencies=protegido)
 
 
 @app.get("/saude", tags=["infra"], summary="Verificação de saúde")

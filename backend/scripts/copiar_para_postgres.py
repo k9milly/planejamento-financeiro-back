@@ -37,6 +37,7 @@ from app.models import (
     GastoFixoMensal,
     ItemWishlist,
     Lancamento,
+    MetaPoupanca,
     RegraCategorizacao,
     SaldoInicial,
     Usuario,
@@ -57,6 +58,7 @@ ORDEM = [
     FaturaMensal,
     ItemWishlist,
     CorFormaPagamento,
+    MetaPoupanca,
 ]
 
 # A origem é o banco local, e não `settings.database_url`: na hora de copiar, a

@@ -247,6 +247,129 @@ Resposta: o registro salvo (`{ forma_pagamento, cor }`).
 
 ---
 
+## Perfil (ADR-06)
+
+`GET /auth/eu` **ganhou dois campos** — quem já consome precisa saber:
+
+```ts
+interface UsuarioOut {
+  id: number;
+  email: string;
+  nome: string | null;          // novo. null = nunca preencheu; usar o e-mail
+  alertas_email_ativo: boolean; // novo. ver aviso abaixo
+}
+```
+
+### `PATCH /auth/eu`
+
+Corpo parcial: `{ nome?: string | null, alertas_email_ativo?: boolean }`.
+Resposta: `UsuarioOut`. Só mexe em quem está logado — não recebe id.
+
+Nome só com espaços vira `null`: "nunca preencheu" e "apagou" são o mesmo
+estado.
+
+> ⚠️ **`alertas_email_ativo` ainda não faz nada.** O backend não envia e-mail
+> — não há serviço de envio nem processo agendado (ADR-06, seção 4). O campo
+> existe para a preferência já ter onde morar. **O toggle não deve aparecer na
+> interface enquanto isso não for implementado**, para não repetir o problema
+> da seção 6 da Parte 1: um controle que parece funcionar e não funciona.
+
+---
+
+## Metas de poupança (ADR-06)
+
+Duas formas, que podem estar ativas ao mesmo tempo: `mensal` (hábito, medido
+contra o guardado do mês) e `prazo` (objetivo, medido contra o acumulado).
+
+**No máximo uma ativa por tipo.** Criar uma nova do mesmo tipo desativa a
+anterior automaticamente — ela vira histórico, não é apagada.
+
+```ts
+type TipoMetaPoupanca = 'mensal' | 'prazo';
+
+interface MetaPoupancaOut {
+  id: number;
+  tipo: TipoMetaPoupanca;
+  valor_alvo: string;        // Decimal como string
+  data_alvo: string | null;  // "YYYY-MM-DD"; só em tipo='prazo'
+  criada_em: string;
+  ativa: boolean;
+}
+```
+
+| Método | Rota | Observação |
+| --- | --- | --- |
+| `GET` | `/metas-poupanca` | Ativas; `?incluir_inativas=true` traz o histórico |
+| `POST` | `/metas-poupanca` | `{ tipo, valor_alvo, data_alvo? }` → `201` |
+| `GET` | `/metas-poupanca/ativas` | Com progresso calculado (abaixo) |
+| `DELETE` | `/metas-poupanca/{id}` | `204`; desativa, não apaga |
+
+Validação: `prazo` **exige** `data_alvo`; `mensal` **recusa** `data_alvo`
+(`422` com a frase pronta, nos dois casos). `valor_alvo` tem de ser > 0.
+
+### `GET /metas-poupanca/ativas`
+
+```ts
+interface MetasAtivasOut {
+  mensal: {
+    id: number;
+    valor_alvo: string;
+    guardado_no_mes: string;
+    percentual: number;   // pode passar de 100; nunca negativo
+  } | null;
+  prazo: {
+    id: number;
+    valor_alvo: string;
+    data_alvo: string;
+    guardado_acumulado: string;
+    percentual: number;
+    dias_restantes: number;  // negativo se a data já passou
+  } | null;
+}
+```
+
+O progresso é calculado **no backend**, a partir do mesmo `guardado` que
+`GET /anos/{ano}/resumo` devolve — o frontend não deve recalcular, senão os
+dois números divergem. Medido sempre contra o **ano corrente**; se ele ainda
+não existe no sistema, o progresso vem zerado em vez de erro.
+
+---
+
+## Alertas de vencimento (ADR-06)
+
+### `GET /alertas`
+
+Gastos fixos e faturas de cartão que vencem nos **próximos 3 dias** e ainda
+não foram pagos. Janela fixa nesta versão, não configurável.
+
+```ts
+interface AlertaOut {
+  tipo: 'gasto_fixo' | 'fatura';
+  nome: string;
+  dia_vencimento: number;
+  dias_restantes: number;   // 0 = vence hoje; nunca negativo
+  valor: string | null;     // null nas faturas — ver abaixo
+  gasto_fixo_id?: number;   // só quando tipo='gasto_fixo'
+  cartao_id?: number;       // só quando tipo='fatura'
+}
+```
+
+Ordenado por urgência (o que vence antes vem primeiro). Não há tabela de
+alertas: é calculado na hora, a partir dos dias de vencimento e do que já
+consta como pago no mês.
+
+Dois comportamentos que valem saber:
+
+- **O que já venceu não aparece.** O que fazer com uma conta atrasada (por
+  quanto tempo insistir, como sinalizar) é outra decisão, ainda não tomada.
+- **`valor` vem `null` nas faturas.** O valor da fatura depende do cálculo do
+  mês inteiro; quem precisa do número exato chama
+  `GET /anos/{ano}/cartoes/{cartao_id}/fatura/{mes}`. O alerta é sobre a data.
+
+Se o ano corrente ainda não foi criado, devolve lista vazia.
+
+---
+
 ## Resumo — tabela de todos os endpoints desta e da rodada anterior
 
 | Método | Rota | Novo ou alterado | Depende de |
@@ -262,6 +385,12 @@ Resposta: o registro salvo (`{ forma_pagamento, cor }`).
 | `GET`/`PUT` | `/preferencias/layout-dashboard` | **novo** | independente de tudo acima |
 | `GET` | `/preferencias/cores-forma-pagamento` | **novo** | independente de tudo acima |
 | `PUT` | `/preferencias/cores-forma-pagamento/{forma_pagamento}` | **novo** | idem |
+| `GET` | `/auth/eu` | alterado — `nome`, `alertas_email_ativo` | ADR-06 |
+| `PATCH` | `/auth/eu` | **novo** | idem |
+| `GET`/`POST` | `/metas-poupanca` | **novo** | idem |
+| `GET` | `/metas-poupanca/ativas` | **novo** | agregação de `guardado` já existente |
+| `DELETE` | `/metas-poupanca/{id}` | **novo** | idem |
+| `GET` | `/alertas` | **novo** | `dia_vencimento` de gastos fixos e cartões |
 
 ---
 
