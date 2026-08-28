@@ -342,17 +342,37 @@ não existe no sistema, o progresso vem zerado em vez de erro.
 Gastos fixos e faturas de cartão que vencem nos **próximos 3 dias** e ainda
 não foram pagos. Janela fixa nesta versão, não configurável.
 
+**São dois formatos**, distinguidos por `tipo` — não um formato único com
+campos opcionais. Os nomes dos campos seguem o vocabulário que cada origem já
+tem no resto da API: `dia_vencimento` é do gasto fixo, `dia_vencimento_fatura`
+é do cartão, e eles significam coisas diferentes. Achatá-los num nome só criaria
+um vocabulário que valeria apenas nesta rota.
+
 ```ts
-interface AlertaOut {
-  tipo: 'gasto_fixo' | 'fatura';
+interface AlertaGastoFixoOut {
+  tipo: 'gasto_fixo';
+  gasto_fixo_id: number;
   nome: string;
   dia_vencimento: number;
   dias_restantes: number;   // 0 = vence hoje; nunca negativo
-  valor: string | null;     // null nas faturas — ver abaixo
-  gasto_fixo_id?: number;   // só quando tipo='gasto_fixo'
-  cartao_id?: number;       // só quando tipo='fatura'
+  valor: string;
 }
+
+interface AlertaFaturaOut {
+  tipo: 'fatura';
+  cartao_id: number;
+  nome_cartao: string;
+  dia_vencimento_fatura: number;
+  dias_restantes: number;
+  valor: string | null;     // sempre null por enquanto — ver abaixo
+}
+
+type AlertaOut = AlertaGastoFixoOut | AlertaFaturaOut;
 ```
+
+No OpenAPI isso sai como `oneOf` com `discriminator: tipo`, então o
+estreitamento de tipo em TypeScript funciona direto:
+`if (alerta.tipo === 'fatura') { alerta.nome_cartao }`.
 
 Ordenado por urgência (o que vence antes vem primeiro). Não há tabela de
 alertas: é calculado na hora, a partir dos dias de vencimento e do que já

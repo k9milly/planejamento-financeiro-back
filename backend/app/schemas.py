@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from decimal import Decimal
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -599,18 +600,37 @@ class MetasAtivasOut(BaseModel):
     prazo: ProgressoMetaPrazoOut | None
 
 
-class AlertaOut(BaseModel):
-    """Uma conta a vencer que ainda não foi paga.
+class AlertaGastoFixoOut(BaseModel):
+    """Um gasto fixo a vencer e ainda não pago."""
 
-    `tipo` diz qual das duas origens gerou o alerta, e só um dos dois pares de
-    identificação vem preenchido: `gasto_fixo_id` ou `cartao_id`.
-    """
-
-    tipo: str
+    tipo: Literal["gasto_fixo"] = "gasto_fixo"
+    gasto_fixo_id: int
     nome: str
     dia_vencimento: int
     # 0 = vence hoje. Nunca negativo: vencido não entra na janela (ver router).
     dias_restantes: int
-    valor: Decimal | None
-    gasto_fixo_id: int | None = None
-    cartao_id: int | None = None
+    valor: Decimal
+
+
+class AlertaFaturaOut(BaseModel):
+    """Uma fatura de cartão a vencer e ainda não paga."""
+
+    tipo: Literal["fatura"] = "fatura"
+    cartao_id: int
+    nome_cartao: str
+    dia_vencimento_fatura: int
+    dias_restantes: int
+    # Sempre nulo por enquanto: o valor em aberto depende do cálculo do mês
+    # inteiro, e quem precisa do número chama o endpoint da fatura. O alerta
+    # aqui é sobre a data.
+    valor: Decimal | None = None
+
+
+# União discriminada por `tipo`: os dois formatos têm campos com nomes
+# diferentes de propósito. `dia_vencimento` (do gasto fixo) e
+# `dia_vencimento_fatura` (do cartão) são coisas distintas em todo o resto da
+# API — achatar os dois num nome só aqui criaria um vocabulário que só vale
+# nesta rota. Idem `nome` e `nome_cartao`.
+AlertaOut = Annotated[
+    AlertaGastoFixoOut | AlertaFaturaOut, Field(discriminator="tipo")
+]

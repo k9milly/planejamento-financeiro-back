@@ -168,10 +168,15 @@ class TestAlertas:
             },
         )
         alertas = cliente.get("/alertas").json()
-        assert [a["nome"] for a in alertas] == ["Internet"]
-        assert alertas[0]["tipo"] == "gasto_fixo"
-        assert alertas[0]["dias_restantes"] == 2
-        assert alertas[0]["valor"] == "54.17"
+        assert len(alertas) == 1
+        assert alertas[0] == {
+            "tipo": "gasto_fixo",
+            "gasto_fixo_id": alertas[0]["gasto_fixo_id"],
+            "nome": "Internet",
+            "dia_vencimento": dia,
+            "dias_restantes": 2,
+            "valor": "54.17",
+        }
 
     def test_gasto_fixo_pago_nao_aparece(self, cliente, ano_corrente, conta):
         hoje = date.today()
@@ -228,10 +233,18 @@ class TestAlertas:
 
         alertas = cliente.get("/alertas").json()
         assert len(alertas) == 1
-        assert alertas[0]["tipo"] == "fatura"
-        assert alertas[0]["cartao_id"] == cartao["id"]
-        # O valor da fatura sai do cálculo do mês; o alerta é sobre a data.
-        assert alertas[0]["valor"] is None
+        # Nomes de campo próprios do cartão, não os do gasto fixo: em todo o
+        # resto da API `dia_vencimento` e `dia_vencimento_fatura` são coisas
+        # diferentes, e esta rota não inventa um vocabulário só dela.
+        assert alertas[0] == {
+            "tipo": "fatura",
+            "cartao_id": cartao["id"],
+            "nome_cartao": "Cartão X",
+            "dia_vencimento_fatura": dia,
+            "dias_restantes": 1,
+            # O valor da fatura sai do cálculo do mês; o alerta é sobre a data.
+            "valor": None,
+        }
 
     def test_ordenado_por_urgencia(self, cliente, ano_corrente, conta):
         ano = date.today().year
@@ -247,6 +260,36 @@ class TestAlertas:
             )
         alertas = cliente.get("/alertas").json()
         assert [a["nome"] for a in alertas] == ["Agora", "Meio", "Depois"]
+
+    def test_ordena_misturando_os_dois_tipos(self, cliente, ano_corrente, conta):
+        """A ordenação precisa lidar com os dois formatos ao mesmo tempo.
+
+        Gasto fixo e fatura têm nomes de campo diferentes, e o desempate por
+        nome lê de campos distintos — misturar os dois é o caso que quebraria
+        se alguém assumisse um formato único.
+        """
+        ano = date.today().year
+        cliente.post(
+            f"/anos/{ano}/gastos-fixos",
+            json={
+                "descricao": "Internet",
+                "valor": "54.17",
+                "dia_vencimento": dia_daqui(2),
+                "conta_id": conta["id"],
+            },
+        )
+        cliente.post(
+            "/contas",
+            json={
+                "nome": "Cartão X",
+                "tipo": "cartao_credito",
+                "dia_vencimento_fatura": dia_daqui(0),
+            },
+        )
+
+        alertas = cliente.get("/alertas").json()
+        assert [a["tipo"] for a in alertas] == ["fatura", "gasto_fixo"]
+        assert [a["dias_restantes"] for a in alertas] == [0, 2]
 
     def test_sem_ano_criado_devolve_lista_vazia(self, cliente):
         assert cliente.get("/alertas").json() == []
