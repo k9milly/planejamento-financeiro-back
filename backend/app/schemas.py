@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from decimal import Decimal
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -21,6 +22,7 @@ from app.models import (
     SituacaoGastoFixo,
     TipoConta,
     TipoLancamento,
+    TipoMetaPoupanca,
 )
 
 
@@ -535,3 +537,100 @@ class ResumoAnoOut(BaseModel):
     por_conta: list[CarteirasContaOut]
     por_cartao: list[CarteirasContaOut]
     meses: list[ResumoMesOut]
+
+
+# --------------------------------------------------------------------------- #
+# Metas de poupança e alertas (ADR-06)
+# --------------------------------------------------------------------------- #
+class MetaPoupancaCriar(BaseModel):
+    tipo: TipoMetaPoupanca
+    valor_alvo: Decimal = Field(gt=0, max_digits=12, decimal_places=2)
+    data_alvo: date | None = None
+
+    @model_validator(mode="after")
+    def _coerencia_do_tipo(self) -> "MetaPoupancaCriar":
+        """Uma meta com prazo sem data não tem contra o que medir; uma meta
+        mensal com data sugere um prazo que ela não respeita."""
+        if self.tipo is TipoMetaPoupanca.PRAZO and self.data_alvo is None:
+            raise ValueError("Uma meta com prazo precisa de uma data-alvo.")
+        if self.tipo is TipoMetaPoupanca.MENSAL and self.data_alvo is not None:
+            raise ValueError("Uma meta mensal não tem data-alvo.")
+        return self
+
+
+class MetaPoupancaOut(_Base):
+    id: int
+    tipo: TipoMetaPoupanca
+    valor_alvo: Decimal
+    data_alvo: date | None
+    criada_em: datetime
+    ativa: bool
+
+
+class ProgressoMetaMensalOut(BaseModel):
+    """Quanto do alvo do mês corrente já foi guardado."""
+
+    id: int
+    valor_alvo: Decimal
+    guardado_no_mes: Decimal
+    # Pode passar de 100 quando se guarda mais que o alvo — não é limitado de
+    # propósito: bater 130% da meta é informação, não erro.
+    percentual: float
+
+
+class ProgressoMetaPrazoOut(BaseModel):
+    """Quanto do alvo já foi acumulado, e quanto tempo resta."""
+
+    id: int
+    valor_alvo: Decimal
+    data_alvo: date
+    guardado_acumulado: Decimal
+    percentual: float
+    # Negativo quando a data já passou e a meta segue ativa — a interface
+    # decide como mostrar isso; o backend não esconde o atraso.
+    dias_restantes: int
+
+
+class MetasAtivasOut(BaseModel):
+    """As duas metas que podem estar valendo ao mesmo tempo, com o progresso
+    já calculado. `null` no lugar de uma delas = não existe meta ativa
+    daquele tipo."""
+
+    mensal: ProgressoMetaMensalOut | None
+    prazo: ProgressoMetaPrazoOut | None
+
+
+class AlertaGastoFixoOut(BaseModel):
+    """Um gasto fixo a vencer e ainda não pago."""
+
+    tipo: Literal["gasto_fixo"] = "gasto_fixo"
+    gasto_fixo_id: int
+    nome: str
+    dia_vencimento: int
+    # 0 = vence hoje. Nunca negativo: vencido não entra na janela (ver router).
+    dias_restantes: int
+    valor: Decimal
+
+
+class AlertaFaturaOut(BaseModel):
+    """Uma fatura de cartão a vencer e ainda não paga."""
+
+    tipo: Literal["fatura"] = "fatura"
+    cartao_id: int
+    nome_cartao: str
+    dia_vencimento_fatura: int
+    dias_restantes: int
+    # O valor em aberto do mês, recalculado — mesma conta que
+    # `GET .../fatura/{mes}` devolve. Nunca nulo: uma fatura sem valor em
+    # aberto não vira alerta (ver `routers/alertas.py`).
+    valor: Decimal
+
+
+# União discriminada por `tipo`: os dois formatos têm campos com nomes
+# diferentes de propósito. `dia_vencimento` (do gasto fixo) e
+# `dia_vencimento_fatura` (do cartão) são coisas distintas em todo o resto da
+# API — achatar os dois num nome só aqui criaria um vocabulário que só vale
+# nesta rota. Idem `nome` e `nome_cartao`.
+AlertaOut = Annotated[
+    AlertaGastoFixoOut | AlertaFaturaOut, Field(discriminator="tipo")
+]
