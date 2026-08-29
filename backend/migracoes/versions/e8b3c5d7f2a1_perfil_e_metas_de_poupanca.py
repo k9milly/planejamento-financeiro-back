@@ -35,7 +35,12 @@ def upgrade() -> None:
                 "alertas_email_ativo",
                 sa.Boolean(),
                 nullable=False,
-                server_default=sa.text("0"),
+                # `sa.false()`, e não `text("0")`: o SQLite aceita 0 como
+                # booleano, o Postgres recusa ("is of type boolean but default
+                # expression is of type integer") e derruba a migração. O
+                # construto do SQLAlchemy é traduzido por dialeto — vira `0`
+                # aqui e `false` lá.
+                server_default=sa.false(),
             )
         )
 
@@ -52,7 +57,7 @@ def upgrade() -> None:
         sa.Column(
             "criada_em", sa.DateTime(), server_default=sa.func.now(), nullable=False
         ),
-        sa.Column("ativa", sa.Boolean(), server_default=sa.text("1"), nullable=False),
+        sa.Column("ativa", sa.Boolean(), server_default=sa.true(), nullable=False),
         sa.CheckConstraint("valor_alvo > 0", name="ck_meta_valor_positivo"),
         sa.CheckConstraint(
             "(tipo = 'PRAZO' AND data_alvo IS NOT NULL) OR "
