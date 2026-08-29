@@ -225,3 +225,32 @@ def calcular_ano(
 def total_guardado_geral(meses: Sequence[TotaisMes]) -> Decimal:
     """O campo 'total' do container 'Total guardado': a reserva ao fim do ano."""
     return meses[-1].guardado_acumulado if meses else ZERO
+
+
+def variacao_do_guardado(lancamentos: Iterable[Lancamento]) -> Decimal:
+    """Quanto a reserva cresceu (ou encolheu) num conjunto de lançamentos.
+
+    Diferente de `TotaisMes.guardado_acumulado`, que é um saldo — o total que
+    existe na reserva num dado momento, incluindo tudo o que veio antes. Aqui é
+    o movimento: só o efeito dos lançamentos recebidos.
+
+    Serve para medir o progresso de uma meta com prazo, que pergunta "quanto
+    juntei desde que decidi juntar" — usar o saldo ali daria a uma meta recém
+    criada o progresso de toda a reserva já existente.
+
+    Os quatro tipos que mexem na reserva estão aqui, e só aqui, para a regra
+    não divergir da usada em `calcular_totais_mes`.
+    """
+    total = ZERO
+    for lanc in lancamentos:
+        valor = _d(lanc.valor)
+        if lanc.tipo is TipoLancamento.GUARDADO:
+            total += valor
+        elif lanc.tipo is TipoLancamento.RETIRADO:
+            total -= valor
+        elif lanc.destino is DestinoRendimento.GUARDADO:
+            if lanc.tipo is TipoLancamento.RENDIMENTO:
+                total += valor
+            elif lanc.tipo is TipoLancamento.PERDA:
+                total -= valor
+    return total

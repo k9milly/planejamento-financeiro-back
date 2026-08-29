@@ -128,6 +128,80 @@ class TestMetasPoupanca:
         resumo = cliente.get(f"/anos/{hoje.year}/resumo").json()
         assert resumo["meses"][hoje.month - 1]["guardado_no_mes"] == "250.00"
 
+    def test_meta_com_prazo_ignora_o_que_ja_estava_guardado(
+        self, cliente, ano_corrente, conta
+    ):
+        """Meta nova nasce em 0%, mesmo com a reserva cheia.
+
+        Este é o erro que o cálculo por saldo cometeria: quem já tem R$ 13 mil
+        guardados e decide juntar R$ 6 mil veria a meta concluída antes de
+        guardar o primeiro real.
+        """
+        hoje = date.today()
+        cliente.post(
+            f"/anos/{hoje.year}/lancamentos",
+            json={
+                "data": hoje.replace(day=1).isoformat(),
+                "valor": "9000.00",
+                "tipo": "guardado",
+                "conta_id": conta["id"],
+            },
+        )
+        cliente.post(
+            "/metas-poupanca",
+            json={"tipo": "prazo", "valor_alvo": "6000", "data_alvo": "2030-12-31"},
+        )
+
+        prazo = cliente.get("/metas-poupanca/ativas").json()["prazo"]
+        # A reserva tem 9.000, mas nada disso foi guardado *para esta meta*.
+        # (O lançamento é do dia 1; a meta nasceu hoje.)
+        if hoje.day > 1:
+            assert prazo["guardado_acumulado"] == "0.00"
+            assert prazo["percentual"] == 0.0
+
+    def test_meta_com_prazo_soma_o_que_veio_depois(self, cliente, ano_corrente, conta):
+        hoje = date.today()
+        cliente.post(
+            "/metas-poupanca",
+            json={"tipo": "prazo", "valor_alvo": "1000", "data_alvo": "2030-12-31"},
+        )
+        cliente.post(
+            f"/anos/{hoje.year}/lancamentos",
+            json={
+                "data": hoje.isoformat(),
+                "valor": "250.00",
+                "tipo": "guardado",
+                "conta_id": conta["id"],
+            },
+        )
+
+        prazo = cliente.get("/metas-poupanca/ativas").json()["prazo"]
+        assert prazo["guardado_acumulado"] == "250.00"
+        assert prazo["percentual"] == 25.0
+
+    def test_retirada_desconta_do_progresso_da_meta(
+        self, cliente, ano_corrente, conta
+    ):
+        """Tirar da reserva anda para trás na meta — não é ignorado."""
+        hoje = date.today()
+        cliente.post(
+            "/metas-poupanca",
+            json={"tipo": "prazo", "valor_alvo": "1000", "data_alvo": "2030-12-31"},
+        )
+        for tipo, valor in (("guardado", "400.00"), ("retirado", "150.00")):
+            cliente.post(
+                f"/anos/{hoje.year}/lancamentos",
+                json={
+                    "data": hoje.isoformat(),
+                    "valor": valor,
+                    "tipo": tipo,
+                    "conta_id": conta["id"],
+                },
+            )
+
+        prazo = cliente.get("/metas-poupanca/ativas").json()["prazo"]
+        assert prazo["guardado_acumulado"] == "250.00"
+
     def test_sem_meta_ativa_devolve_nulo(self, cliente):
         ativas = cliente.get("/metas-poupanca/ativas").json()
         assert ativas == {"mensal": None, "prazo": None}
@@ -221,6 +295,7 @@ class TestAlertas:
         assert cliente.get("/alertas").json() == []
 
     def test_fatura_de_cartao_tambem_alerta(self, cliente, ano_corrente):
+        hoje = date.today()
         dia = dia_daqui(1)
         cartao = cliente.post(
             "/contas",
@@ -230,6 +305,17 @@ class TestAlertas:
                 "dia_vencimento_fatura": dia,
             },
         ).json()
+        cliente.post(
+            f"/anos/{hoje.year}/lancamentos",
+            json={
+                "data": hoje.isoformat(),
+                "valor": "80.00",
+                "tipo": "saida",
+                "conta_id": cartao["id"],
+                "forma_pagamento": "credito",
+                "descricao": "compra",
+            },
+        )
 
         alertas = cliente.get("/alertas").json()
         assert len(alertas) == 1
@@ -242,24 +328,84 @@ class TestAlertas:
             "nome_cartao": "Cartão X",
             "dia_vencimento_fatura": dia,
             "dias_restantes": 1,
-            # O valor da fatura sai do cálculo do mês; o alerta é sobre a data.
-            "valor": None,
+            "valor": "80.00",
         }
 
+    def test_valor_do_alerta_bate_com_o_endpoint_da_fatura(
+        self, cliente, ano_corrente
+    ):
+        """Os dois números saem do mesmo cálculo — não podem divergir."""
+        hoje = date.today()
+        cartao = cliente.post(
+            "/contas",
+            json={
+                "nome": "Cartão Y",
+                "tipo": "cartao_credito",
+                "dia_vencimento_fatura": dia_daqui(1),
+            },
+        ).json()
+        cliente.post(
+            f"/anos/{hoje.year}/lancamentos",
+            json={
+                "data": hoje.isoformat(),
+                "valor": "123.45",
+                "tipo": "saida",
+                "conta_id": cartao["id"],
+                "forma_pagamento": "credito",
+            },
+        )
+
+        alerta = cliente.get("/alertas").json()[0]
+        fatura = cliente.get(
+            f"/anos/{hoje.year}/cartoes/{cartao['id']}/fatura/{hoje.month}"
+        ).json()
+        assert alerta["valor"] == fatura["valor_em_aberto"] == "123.45"
+
+    def test_fatura_zerada_nao_vira_alerta(self, cliente, ano_corrente):
+        """Sem nada a pagar não há o que avisar.
+
+        O endpoint de pagar recusaria a operação de qualquer forma — alertar
+        aqui ofereceria uma ação impossível.
+        """
+        cliente.post(
+            "/contas",
+            json={
+                "nome": "Cartão sem uso",
+                "tipo": "cartao_credito",
+                "dia_vencimento_fatura": dia_daqui(1),
+            },
+        )
+        assert cliente.get("/alertas").json() == []
+
     def test_ordenado_por_urgencia(self, cliente, ano_corrente, conta):
-        ano = date.today().year
-        for nome, dias in (("Depois", 3), ("Agora", 0), ("Meio", 1)):
+        """Usa os offsets que cabem no mês, em vez de offsets fixos.
+
+        Com offsets fixos o teste era pulado nos últimos dias de cada mês —
+        e ficar sem cobertura de ordenação justamente na virada é o pior
+        momento para não ter.
+        """
+        hoje = date.today()
+        ultimo = calendar.monthrange(hoje.year, hoje.month)[1]
+        # Janela do alerta é 0..3 dias; sobra o que couber até o fim do mês.
+        offsets = [d for d in range(4) if hoje.day + d <= ultimo]
+        if len(offsets) < 2:
+            pytest.skip("último dia do mês: não há dois vencimentos a ordenar")
+
+        # Cadastra fora de ordem de propósito — a API é que ordena.
+        for offset in reversed(offsets):
             cliente.post(
-                f"/anos/{ano}/gastos-fixos",
+                f"/anos/{hoje.year}/gastos-fixos",
                 json={
-                    "descricao": nome,
+                    "descricao": f"Vence em {offset}",
                     "valor": "10.00",
-                    "dia_vencimento": dia_daqui(dias),
+                    "dia_vencimento": hoje.day + offset,
                     "conta_id": conta["id"],
                 },
             )
+
         alertas = cliente.get("/alertas").json()
-        assert [a["nome"] for a in alertas] == ["Agora", "Meio", "Depois"]
+        assert [a["dias_restantes"] for a in alertas] == offsets
+        assert [a["nome"] for a in alertas] == [f"Vence em {d}" for d in offsets]
 
     def test_ordena_misturando_os_dois_tipos(self, cliente, ano_corrente, conta):
         """A ordenação precisa lidar com os dois formatos ao mesmo tempo.
@@ -278,12 +424,23 @@ class TestAlertas:
                 "conta_id": conta["id"],
             },
         )
-        cliente.post(
+        cartao = cliente.post(
             "/contas",
             json={
                 "nome": "Cartão X",
                 "tipo": "cartao_credito",
                 "dia_vencimento_fatura": dia_daqui(0),
+            },
+        ).json()
+        # A fatura precisa ter valor em aberto para virar alerta.
+        cliente.post(
+            f"/anos/{ano}/lancamentos",
+            json={
+                "data": date.today().isoformat(),
+                "valor": "80.00",
+                "tipo": "saida",
+                "conta_id": cartao["id"],
+                "forma_pagamento": "credito",
             },
         )
 

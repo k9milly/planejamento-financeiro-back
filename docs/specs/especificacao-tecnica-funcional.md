@@ -447,6 +447,13 @@ depois do seed inicial.
 
 ## 6. Configurações → Perfil e Alertas (`/configuracoes`)
 
+**Atualização (ADR-06):** nome, meta de poupança e alertas de vencimento
+deixaram de ser um gap deliberado — viraram uma decisão de produto tomada
+de propósito, com contrato de API na seção 12. O texto abaixo (seções "O
+que a tela mostra hoje" e "Decisão necessária") descreve a situação
+**anterior** ao ADR-06, mantido aqui como registro do porquê a redução de
+escopo foi a decisão certa naquele momento.
+
 ### O que a tela mostra hoje (mock)
 
 Campos de nome, e-mail e "meta de taxa de poupança (%)" com valores
@@ -479,6 +486,11 @@ tabela `PreferenciaUsuario`, no mesmo espírito de
 ---
 
 ## 7. Metas & Orçamentos (`/metas`)
+
+**Atualização (ADR-06):** a parte de **meta de poupança** (`goals`) desta
+tela ganhou contrato de API real — ver seção 12. A parte de **orçamento por
+categoria** (`budgets`) continua fora de escopo, sem nenhuma mudança em
+relação ao que está descrito abaixo e ao `ADR-0007` do repositório back.
 
 ### O que a tela mostra hoje (mock)
 
@@ -684,6 +696,118 @@ já consome.
 
 ---
 
+## 12. Perfil real, Meta de Poupança e Alertas de Vencimento (ADR-06)
+
+Contrato novo — nenhum destes endpoints existe ainda no backend no momento
+em que esta seção foi escrita. Ver `docs/adr/ADR-06-*.md` para o raciocínio
+completo por trás de cada decisão de formato.
+
+### Perfil — nome
+
+```ts
+// GET /auth/eu passa a incluir nome
+interface UsuarioOut {
+  id: number;
+  email: string;
+  nome: string | null;
+}
+
+// PATCH /auth/eu
+interface UsuarioAtualizar {
+  nome?: string;
+}
+```
+
+### Meta de poupança
+
+Duas formas simultâneas possíveis: uma meta mensal recorrente e uma meta
+com prazo, cada uma com no máximo uma instância ativa por vez. Criar uma
+meta nova do mesmo tipo desativa a anterior.
+
+```ts
+interface MetaPoupancaCriar {
+  tipo: "mensal" | "prazo";
+  valor_alvo: string;                 // Decimal como string, como o resto da API
+  data_alvo?: string | null;          // ISO date; obrigatório quando tipo="prazo"
+}
+
+interface MetaAtivaMensal {
+  id: number;
+  valor_alvo: string;
+  guardado_no_mes: string;            // soma de lançamentos "guardado" do mês corrente
+  percentual: number;                 // 0-100+, guardado_no_mes / valor_alvo
+}
+
+interface MetaAtivaPrazo {
+  id: number;
+  valor_alvo: string;
+  data_alvo: string;
+  dias_restantes: number;
+  guardado_acumulado: string;         // soma de "guardado" desde a criação da meta
+  percentual: number;
+}
+
+// GET /metas-poupanca/ativas
+interface MetasAtivasOut {
+  mensal: MetaAtivaMensal | null;
+  prazo: MetaAtivaPrazo | null;
+}
+
+// POST /metas-poupanca → cria e ativa (desativando a anterior do mesmo tipo)
+// GET /metas-poupanca → histórico completo (ativas e desativadas), opcional para uma tela de histórico futura
+// DELETE /metas-poupanca/{id} → desativa sem criar outra por cima
+```
+
+Esta é a implementação real do que a seção 7 chamava de `goals` na tela
+`/metas` — a lista `budgets` (orçamento por categoria) da mesma tela
+**continua mocada e fora de escopo**, sem relação com este contrato.
+
+### Alertas de vencimento
+
+Consulta computada, sem tabela própria — só itens não pagos com vencimento
+dentro de 3 dias (constante do backend nesta primeira versão).
+
+```ts
+// A API gera oneOf + discriminator: tipo no OpenAPI (dois schemas Pydantic
+// distintos, não um schema com campos opcionais) — o TypeScript estreita o
+// tipo sozinho a partir de `tipo`, sem cast:
+//   if (alerta.tipo === "fatura") { alerta.nome_cartao }  // já funciona
+type AlertaOut =
+  | { tipo: "gasto_fixo"; gasto_fixo_id: number; nome: string; dia_vencimento: number; valor: string; dias_restantes: number }
+  | { tipo: "fatura"; cartao_id: number; nome_cartao: string; dia_vencimento_fatura: number; valor: string; dias_restantes: number };
+
+// GET /alertas → AlertaOut[]
+```
+
+`dia_vencimento` (gasto fixo) e `dia_vencimento_fatura` (cartão)
+propositalmente **não** foram uniformizados num nome só — em todo o resto
+da API esses dois campos significam coisas diferentes, e manter os nomes
+distintos aqui evita que o front leia o campo errado assumindo que
+significam a mesma coisa. `valor` (o valor do gasto fixo ou da fatura em
+aberto) é novo nos dois tipos, para o alerta mostrar quanto está vencendo,
+não só o quê.
+
+Cobre só vencimento de gasto fixo/fatura — não inclui progresso de meta de
+poupança nem saldo baixo (fora de escopo nesta rodada, ver ADR-06).
+
+### Preferência de alerta por e-mail
+
+```ts
+// PATCH /auth/eu (mesmo endpoint do nome, campo adicional)
+interface UsuarioAtualizar {
+  nome?: string;
+  alertas_email_ativo?: boolean;
+}
+```
+
+O envio de e-mail em si (o mecanismo que de fato manda a mensagem) é uma
+fase de backend separada e posterior — o front só deve mostrar o toggle
+depois que essa fase estiver pronta, para não repetir o problema que a
+seção 6 já identificava (controle na tela que não faz nada de verdade). Até
+lá, `alertas_email_ativo` pode existir na API sem nenhum efeito observável.
+
+---
+
 ## Resumo — todos os endpoints usados por esta integração
 
 | Método | Rota | Usado por |
@@ -697,10 +821,14 @@ já consome.
 | `GET`/`POST`/`{mes}/pagar`/`{mes}/desfazer` | `/anos/{ano}/cartoes/{cartao_id}/fatura` | Botão "Pagar fatura" em Configurações → Contas |
 | `GET`/`POST`/`PATCH`/`DELETE`/`{gasto_id}/meses/{mes}/pagar`/`.../desfazer` | `/anos/{ano}/gastos-fixos` | Gastos Fixos, Calendário de Vencimentos |
 | `GET`/`POST`/`PATCH`/`DELETE`, `GET .../total` | `/anos/{ano}/wishlist` | Wishlist |
+| `PATCH` | `/auth/eu` | Perfil → nome, preferência de alerta por e-mail (seção 12, ADR-06) |
+| `GET`/`POST`/`DELETE` | `/metas-poupanca`, `GET /metas-poupanca/ativas` | Perfil e `/metas` → meta de poupança real (seção 12, ADR-06) |
+| `GET` | `/alertas` | Painel de alertas de vencimento (seção 12, ADR-06) |
 
-Nenhum endpoint novo é necessário no backend para esta rodada — todos os
-que as telas da Etapa A precisam (Contas, Fatura, Gastos Fixos, Wishlist)
-já existem e já foram conferidos linha a linha contra o código real do
-backend. O gap que resta é só `Metas & Orçamentos` e parte de
-`Configurações` (perfil/alertas), que continuam dependendo de domínio que o
-backend deliberadamente ainda não tem (seções 6 e 7).
+Todos os endpoints das seções 1–11 já existiam e foram conferidos linha a
+linha contra o código real do backend — nenhum precisou ser criado para
+aquela rodada. Os quatro últimos da tabela acima (seção 12) são o único
+domínio novo deste pacote, decidido pelo ADR-06: nome, meta de poupança e
+alertas de vencimento. `budgets` (orçamento por categoria, dentro da tela
+`/metas`) continua fora de escopo, sem endpoint — ver seção 7 e o
+`ADR-0007` do repositório back.

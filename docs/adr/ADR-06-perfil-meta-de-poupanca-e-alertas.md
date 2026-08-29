@@ -80,9 +80,21 @@ lugares e arriscar os dois desencontrarem:
 GET /metas-poupanca/ativas
 → {
     mensal: { id, valor_alvo, guardado_no_mes: Decimal, percentual: number } | null,
-    prazo: { id, valor_alvo, data_alvo, guardado_acumulado: Decimal, percentual: number } | null
+    prazo: { id, valor_alvo, data_alvo, dias_restantes: number, guardado_acumulado: Decimal, percentual: number } | null
   }
 ```
+
+`dias_restantes` na meta com prazo não estava na primeira versão deste ADR
+— entrou durante a implementação (o backend já calcula isso, é barato
+devolver pronto em vez de o frontend recalcular a partir de `data_alvo`) e
+foi aceito como parte oficial do contrato.
+
+**`DELETE /metas-poupanca/{id}`** — endpoint que faltava na primeira versão
+deste ADR. Sem ele, a única forma de "desligar" uma meta seria criar outra
+por cima, o que não cobre o caso de simplesmente não querer mais
+acompanhar aquela meta sem substituí-la. Desativa a meta (ela sai de
+`/ativas`, mas o histórico continua no banco, como qualquer desativação
+deste sistema).
 
 Essa entidade passa a ser a implementação real do que a seção 7 da Parte 1
 chamava de `goals` na tela `/metas` — **a lista de `budgets` (orçamento por
@@ -103,11 +115,34 @@ de existir ou não um `Lancamento` correspondente no mês):
 
 ```
 GET /alertas
-→ [
-    { tipo: "gasto_fixo", gasto_fixo_id, nome, dia_vencimento, dias_restantes },
-    { tipo: "fatura", cartao_id, nome_cartao, dia_vencimento_fatura, dias_restantes }
-  ]
+→ (AlertaGastoFixoOut | AlertaFaturaOut)[]
+
+AlertaGastoFixoOut:
+  tipo: "gasto_fixo"
+  gasto_fixo_id, nome, dia_vencimento, valor: Decimal, dias_restantes: number
+
+AlertaFaturaOut:
+  tipo: "fatura"
+  cartao_id, nome_cartao, dia_vencimento_fatura, valor: Decimal, dias_restantes: number
 ```
+
+Duas correções sobre a primeira versão deste ADR, decididas durante a
+implementação:
+
+- **Dois schemas, não um schema único com campos opcionais.** A primeira
+  versão listava um objeto só, com `nome`/`dia_vencimento` compartilhados
+  entre os dois tipos — mas em todo o resto da API `dia_vencimento`
+  (Gasto Fixo) e `dia_vencimento_fatura` (cartão) são conceitos diferentes,
+  com nomes diferentes; uniformizar só nesta rota quebrava esse vocabulário.
+  A correção não foi só voltar a campos por tipo — foi modelar como dois
+  schemas Pydantic distintos unidos por `discriminator: tipo`. Isso faz o
+  OpenAPI gerar `oneOf` com discriminador, e o TypeScript estreita o tipo
+  sozinho a partir do `tipo` (`if (alerta.tipo === 'fatura') { alerta.nome_cartao }`
+  já funciona sem cast) — mais forte do que campos opcionais, onde nada
+  garante que o par certo veio preenchido.
+- **Campo `valor` novo nos dois tipos** — o valor do gasto fixo ou da
+  fatura em aberto, não estava na primeira versão. Adicionado porque o
+  alerta fica mais útil mostrando quanto está vencendo, não só o quê.
 
 Só entram itens **não pagos** com vencimento dentro de uma janela fixa —
 **3 dias** de antecedência para esta primeira versão (constante no backend,

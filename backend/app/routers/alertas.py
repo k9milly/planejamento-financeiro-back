@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import calendar
 from datetime import date
+from decimal import Decimal
 
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
@@ -24,6 +25,7 @@ from app.models import (
     SituacaoGastoFixo,
     TipoConta,
 )
+from app.routers.anos import totais_do_ano
 from app.schemas import AlertaFaturaOut, AlertaGastoFixoOut, AlertaOut
 
 router = APIRouter(prefix="/alertas", tags=["alertas"])
@@ -122,7 +124,7 @@ def _de_faturas(ano_ref: Ano, hoje: date, db: Session) -> list[AlertaFaturaOut]:
         )
     }
 
-    alertas = []
+    candidatos = []
     for cartao in db.query(Conta).filter(
         Conta.tipo == TipoConta.CARTAO_CREDITO, Conta.ativa.is_(True)
     ):
@@ -132,7 +134,27 @@ def _de_faturas(ano_ref: Ano, hoje: date, db: Session) -> list[AlertaFaturaOut]:
         if cartao.dia_vencimento_fatura is None or cartao.id in pagas:
             continue
         dias = _dias_ate(cartao.dia_vencimento_fatura, hoje)
-        if dias is None:
+        if dias is not None:
+            candidatos.append((cartao, dias))
+
+    if not candidatos:
+        # Sem nenhum cartão a vencer, nem vale rodar o cálculo do ano.
+        return []
+
+    # Uma passada só, e não uma por cartão: o valor em aberto sai do cálculo
+    # do ano inteiro, e `faturas._valor_em_aberto` refaria essa conta a cada
+    # chamada. Com dois cartões já seria o dobro de trabalho pelo mesmo
+    # resultado.
+    carteiras = totais_do_ano(ano_ref, db)[hoje.month - 1].por_cartao
+
+    alertas = []
+    for cartao, dias in candidatos:
+        carteira = carteiras.get(cartao.id)
+        em_aberto = -carteira.saldo if carteira else Decimal("0.00")
+        # Fatura zerada (ou com crédito a favor) não vira alerta: não há o que
+        # pagar, e `.../fatura/{mes}/pagar` recusaria a operação de qualquer
+        # forma. Avisar aqui seria oferecer uma ação impossível.
+        if em_aberto <= 0:
             continue
         alertas.append(
             AlertaFaturaOut(
@@ -140,10 +162,7 @@ def _de_faturas(ano_ref: Ano, hoje: date, db: Session) -> list[AlertaFaturaOut]:
                 nome_cartao=cartao.nome,
                 dia_vencimento_fatura=cartao.dia_vencimento_fatura,
                 dias_restantes=dias,
-                # O valor em aberto depende do cálculo do mês inteiro; quem
-                # precisa do número exato chama o endpoint da fatura. Aqui o
-                # alerta é sobre a data, não sobre o valor.
-                valor=None,
+                valor=em_aberto,
             )
         )
     return alertas

@@ -217,8 +217,9 @@ para quando essa fase existir (ADR-06).
 ## Metas de poupança
 
 Duas formas, que convivem: `mensal` (contra o guardado do mês) e `prazo`
-(contra o acumulado, até uma data). No máximo **uma ativa por tipo** — criar
-outra do mesmo tipo desativa a anterior, que vira histórico.
+(contra o que se guardou desde que a meta existe, até uma data). No máximo
+**uma ativa por tipo** — criar outra do mesmo tipo desativa a anterior, que
+vira histórico.
 
 | Método | Rota | Descrição |
 | --- | --- | --- |
@@ -227,9 +228,12 @@ outra do mesmo tipo desativa a anterior, que vira histórico.
 | `GET` | `/metas-poupanca/ativas` | As em vigor, com progresso calculado |
 | `DELETE` | `/metas-poupanca/{id}` | Desativa (não apaga) |
 
-`prazo` exige `data_alvo`; `mensal` a recusa. O progresso sai da mesma
-agregação de `guardado` que alimenta `/anos/{ano}/resumo` — nunca é
-recalculado à parte, e nunca é guardado em coluna.
+`prazo` exige `data_alvo`; `mensal` a recusa. O progresso nunca é guardado em
+coluna — sai sempre do mesmo lugar que os totais do resumo, mas medindo coisas
+diferentes: a meta **mensal** olha o guardado do mês corrente; a meta com
+**prazo** conta só o que foi guardado a partir do dia em que ela foi criada,
+para uma meta nova não nascer concluída por causa da reserva que já existia.
+Retiradas descontam.
 
 ## Alertas
 
@@ -238,8 +242,8 @@ recalculado à parte, e nunca é guardado em coluna.
 | `GET` | `/alertas` | Gastos fixos e faturas a vencer em até 3 dias, não pagos |
 
 Calculado sob demanda, sem tabela própria. Ordenado por urgência. O que já
-venceu não aparece, e `valor` vem nulo nas faturas (o valor exato depende do
-cálculo do mês — use o endpoint da fatura).
+venceu não aparece, e fatura zerada também não (sem valor em aberto não há o
+que pagar). O `valor` da fatura é o mesmo que o endpoint da fatura devolve.
 
 A resposta tem **dois formatos**, escolhidos por `tipo`, cada um usando os
 nomes que aquela origem já tem no resto da API — `dia_vencimento`/`nome` para

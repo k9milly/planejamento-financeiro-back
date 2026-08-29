@@ -328,10 +328,16 @@ interface MetasAtivasOut {
 }
 ```
 
-O progresso é calculado **no backend**, a partir do mesmo `guardado` que
-`GET /anos/{ano}/resumo` devolve — o frontend não deve recalcular, senão os
-dois números divergem. Medido sempre contra o **ano corrente**; se ele ainda
-não existe no sistema, o progresso vem zerado em vez de erro.
+O progresso é calculado **no backend** — o frontend não deve recalcular, senão
+os dois números divergem. Mas os dois tipos medem coisas diferentes:
+
+- **`mensal`** olha o `guardado_no_mes` do **mês corrente**, o mesmo número que
+  `GET /anos/{ano}/resumo` traz para aquele mês. Medido contra o ano corrente;
+  se ele ainda não existe no sistema, vem zerado em vez de erro.
+- **`prazo`** conta só o que foi guardado **a partir do dia em que a meta foi
+  criada** — não o total da reserva. Uma meta nova nasce em 0%, mesmo com a
+  reserva cheia: quem já tem R$ 13 mil guardados e decide juntar R$ 6 mil não
+  está com a meta concluída. Retiradas descontam do progresso.
 
 ---
 
@@ -364,7 +370,7 @@ interface AlertaFaturaOut {
   nome_cartao: string;
   dia_vencimento_fatura: number;
   dias_restantes: number;
-  valor: string | null;     // sempre null por enquanto — ver abaixo
+  valor: string;            // valor em aberto, igual ao do endpoint da fatura
 }
 
 type AlertaOut = AlertaGastoFixoOut | AlertaFaturaOut;
@@ -378,13 +384,15 @@ Ordenado por urgência (o que vence antes vem primeiro). Não há tabela de
 alertas: é calculado na hora, a partir dos dias de vencimento e do que já
 consta como pago no mês.
 
-Dois comportamentos que valem saber:
+Três comportamentos que valem saber:
 
 - **O que já venceu não aparece.** O que fazer com uma conta atrasada (por
   quanto tempo insistir, como sinalizar) é outra decisão, ainda não tomada.
-- **`valor` vem `null` nas faturas.** O valor da fatura depende do cálculo do
-  mês inteiro; quem precisa do número exato chama
-  `GET /anos/{ano}/cartoes/{cartao_id}/fatura/{mes}`. O alerta é sobre a data.
+- **Fatura zerada não vira alerta.** Sem valor em aberto não há o que pagar, e
+  `.../fatura/{mes}/pagar` recusaria a operação — avisar ali ofereceria uma
+  ação impossível.
+- **O `valor` da fatura é o mesmo que `GET .../fatura/{mes}` devolve** em
+  `valor_em_aberto`. Sai do mesmo cálculo; se os dois divergirem, é bug.
 
 Se o ano corrente ainda não foi criado, devolve lista vazia.
 

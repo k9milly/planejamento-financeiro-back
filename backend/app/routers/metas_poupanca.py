@@ -13,8 +13,9 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models import Ano, MetaPoupanca, TipoMetaPoupanca
+from app.models import Ano, Lancamento, MetaPoupanca, TipoMetaPoupanca
 from app.routers.anos import totais_do_ano
+from app.services.calculos import variacao_do_guardado
 from app.schemas import (
     MetaPoupancaCriar,
     MetaPoupancaOut,
@@ -91,7 +92,7 @@ def ativas(db: Session = Depends(get_db)) -> MetasAtivasOut:
 
     return MetasAtivasOut(
         mensal=_progresso_mensal(_ativa(TipoMetaPoupanca.MENSAL, db), meses, hoje),
-        prazo=_progresso_prazo(_ativa(TipoMetaPoupanca.PRAZO, db), meses, hoje),
+        prazo=_progresso_prazo(_ativa(TipoMetaPoupanca.PRAZO, db), hoje, db),
     )
 
 
@@ -148,13 +149,30 @@ def _progresso_mensal(
 
 
 def _progresso_prazo(
-    meta: MetaPoupanca | None, meses, hoje: date
+    meta: MetaPoupanca | None, hoje: date, db: Session
 ) -> ProgressoMetaPrazoOut | None:
+    """Conta só o que foi guardado **desde que a meta foi criada**.
+
+    Usar o saldo da reserva aqui daria a uma meta recém-criada o progresso de
+    tudo o que já estava guardado antes — quem decide hoje juntar R$ 6.000
+    veria "217% concluído" antes de guardar o primeiro real.
+
+    Por isso não passa pelos totais mensais: o período de uma meta começa num
+    dia qualquer, não no primeiro do mês, e atravessa anos. A comparação é por
+    data do lançamento — `Lancamento` não guarda hora, então tudo o que foi
+    lançado no dia em que a meta nasceu conta para ela.
+    """
     if meta is None:
         return None
-    # Acumulado até o mês corrente, não até dezembro: meses futuros ainda não
-    # aconteceram, e contá-los mostraria progresso que não existe.
-    guardado = meses[hoje.month - 1].guardado_acumulado if meses else ZERO
+
+    desde = meta.criada_em.date()
+    lancamentos = (
+        db.query(Lancamento)
+        .filter(Lancamento.data >= desde, Lancamento.data <= hoje)
+        .all()
+    )
+    guardado = variacao_do_guardado(lancamentos)
+
     return ProgressoMetaPrazoOut(
         id=meta.id,
         valor_alvo=meta.valor_alvo,
