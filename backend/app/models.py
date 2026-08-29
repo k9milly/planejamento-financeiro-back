@@ -22,8 +22,9 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    false,
     func,
-    text,
+    true,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -184,7 +185,7 @@ class Usuario(Base):
     # processo agendado. O campo existe para a preferência ter onde morar
     # quando essa fase chegar (ADR-06, seção 4).
     alertas_email_ativo: Mapped[bool] = mapped_column(
-        Boolean, nullable=False, default=False, server_default=text("0")
+        Boolean, nullable=False, default=False, server_default=false()
     )
 
     # Como o usuário arrumou os blocos do painel. Texto opaco de propósito: é
@@ -504,7 +505,7 @@ class MetaPoupanca(Base):
         DateTime, nullable=False, server_default=func.now()
     )
     ativa: Mapped[bool] = mapped_column(
-        Boolean, nullable=False, default=True, server_default=text("1")
+        Boolean, nullable=False, default=True, server_default=true()
     )
 
 
