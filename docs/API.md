@@ -200,6 +200,64 @@ texto livre de antes do enum existir, mantido só para exibição.
 | `PATCH` | `/anos/{ano}/wishlist/{id}` | Atualização parcial |
 | `DELETE` | `/anos/{ano}/wishlist/{id}` | Remove o item |
 
+## Perfil
+
+| Método | Rota | Descrição |
+| --- | --- | --- |
+| `GET` | `/auth/eu` | `{ id, email, nome, alertas_email_ativo }` |
+| `PATCH` | `/auth/eu` | Edita `nome` e `alertas_email_ativo` de quem está logado |
+
+`nome` é opcional (`null` = nunca preencheu; a interface cai no e-mail). Nome
+só com espaços volta a `null`.
+
+`alertas_email_ativo` **ainda não tem efeito**: o backend não envia e-mail —
+não há serviço de envio nem processo agendado. O campo guarda a preferência
+para quando essa fase existir (ADR-06).
+
+## Metas de poupança
+
+Duas formas, que convivem: `mensal` (contra o guardado do mês) e `prazo`
+(contra o que se guardou desde que a meta existe, até uma data). No máximo
+**uma ativa por tipo** — criar outra do mesmo tipo desativa a anterior, que
+vira histórico.
+
+| Método | Rota | Descrição |
+| --- | --- | --- |
+| `GET` | `/metas-poupanca` | Ativas; `?incluir_inativas=true` traz o histórico |
+| `POST` | `/metas-poupanca` | `{ "tipo": "prazo", "valor_alvo": "6000", "data_alvo": "2027-12-31" }` |
+| `GET` | `/metas-poupanca/ativas` | As em vigor, com progresso calculado |
+| `DELETE` | `/metas-poupanca/{id}` | Desativa (não apaga) |
+
+`prazo` exige `data_alvo`; `mensal` a recusa. O progresso nunca é guardado em
+coluna — sai sempre do mesmo lugar que os totais do resumo, mas medindo coisas
+diferentes: a meta **mensal** olha o guardado do mês corrente; a meta com
+**prazo** conta só o que foi guardado a partir do dia em que ela foi criada,
+para uma meta nova não nascer concluída por causa da reserva que já existia.
+Retiradas descontam.
+
+## Alertas
+
+| Método | Rota | Descrição |
+| --- | --- | --- |
+| `GET` | `/alertas` | Gastos fixos e faturas a vencer em até 3 dias, não pagos |
+
+Calculado sob demanda, sem tabela própria. Ordenado por urgência. O que já
+venceu não aparece, e fatura zerada também não (sem valor em aberto não há o
+que pagar). O `valor` da fatura é o mesmo que o endpoint da fatura devolve.
+
+A resposta tem **dois formatos**, escolhidos por `tipo`, cada um usando os
+nomes que aquela origem já tem no resto da API — `dia_vencimento`/`nome` para
+o gasto fixo, `dia_vencimento_fatura`/`nome_cartao` para o cartão:
+
+```json
+[
+  {"tipo": "gasto_fixo", "gasto_fixo_id": 3, "nome": "Internet",
+   "dia_vencimento": 10, "dias_restantes": 2, "valor": "54.17"},
+  {"tipo": "fatura", "cartao_id": 5, "nome_cartao": "Nubank",
+   "dia_vencimento_fatura": 12, "dias_restantes": 3, "valor": null}
+]
+```
+
 ## Infraestrutura
 
 ### `GET /saude`

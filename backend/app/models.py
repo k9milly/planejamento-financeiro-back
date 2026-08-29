@@ -23,6 +23,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     func,
+    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -109,6 +110,19 @@ class Importancia(str, enum.Enum):
     ALTA = "alta"
 
 
+class TipoMetaPoupanca(str, enum.Enum):
+    """As duas formas de querer poupar, que respondem a perguntas diferentes.
+
+    `MENSAL` é um hábito ("guardar R$ 500 todo mês") e se compara ao guardado
+    de cada mês. `PRAZO` é um objetivo ("juntar R$ 6.000 até dezembro") e se
+    compara ao guardado acumulado. As duas podem estar ativas ao mesmo tempo
+    (ADR-06).
+    """
+
+    MENSAL = "mensal"
+    PRAZO = "prazo"
+
+
 class Ano(Base):
     """Um ano-calendário de planejamento, com seus 12 meses.
 
@@ -158,6 +172,19 @@ class Usuario(Base):
     ativo: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     criado_em: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, server_default=func.now()
+    )
+
+    # Como a pessoa quer ser chamada na interface. Opcional: quem nunca
+    # preencheu continua identificado pelo e-mail, como era antes (ADR-06).
+    nome: Mapped[str | None] = mapped_column(String(120), nullable=True)
+
+    # Se os alertas de vencimento também devem sair por e-mail, além de
+    # aparecerem no app. Nasce desligado, e por enquanto ligá-lo não faz nada:
+    # o backend não envia e-mail nenhum — não existe serviço de envio nem
+    # processo agendado. O campo existe para a preferência ter onde morar
+    # quando essa fase chegar (ADR-06, seção 4).
+    alertas_email_ativo: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("0")
     )
 
     # Como o usuário arrumou os blocos do painel. Texto opaco de propósito: é
@@ -435,6 +462,50 @@ class CorFormaPagamento(Base):
         Enum(FormaPagamento, native_enum=False), primary_key=True
     )
     cor: Mapped[str] = mapped_column(String(7), nullable=False)
+
+
+class MetaPoupanca(Base):
+    """Quanto a pessoa quer guardar — por mês, ou até uma data (ADR-06).
+
+    É uma entidade e não um campo solto no usuário porque tem ciclo de vida
+    próprio: nasce, fica ativa, e é aposentada quando outra do mesmo tipo a
+    substitui. Meta trocada não é apagada — vira `ativa=False` e some do
+    progresso, mas continua no banco como histórico do que já se pretendeu.
+
+    Global, como o resto do domínio financeiro (`Ano`, `Conta`, `Categoria`):
+    quem é por usuário aqui é só a preferência de tela, não o dinheiro.
+
+    O progresso não é guardado em coluna nenhuma — é recalculado a partir do
+    `guardado` que `services/calculos.py` já apura. Guardar um número
+    derivado abriria a porta para ele divergir da fonte.
+    """
+
+    __tablename__ = "metas_poupanca"
+    __table_args__ = (
+        CheckConstraint("valor_alvo > 0", name="ck_meta_valor_positivo"),
+        # A regra "prazo exige data, mensal não usa data" também é validada no
+        # schema, para o erro chegar em português. Aqui é a rede de segurança
+        # contra escrita que não passe pela API.
+        CheckConstraint(
+            "(tipo = 'PRAZO' AND data_alvo IS NOT NULL) OR "
+            "(tipo = 'MENSAL' AND data_alvo IS NULL)",
+            name="ck_meta_data_alvo_coerente",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    tipo: Mapped[TipoMetaPoupanca] = mapped_column(
+        Enum(TipoMetaPoupanca, native_enum=False), nullable=False, index=True
+    )
+    valor_alvo: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False)
+    # Só para `tipo=PRAZO`; obrigatoriamente nulo em `MENSAL`.
+    data_alvo: Mapped[date | None] = mapped_column(Date, nullable=True)
+    criada_em: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, server_default=func.now()
+    )
+    ativa: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default=text("1")
+    )
 
 
 class FaturaMensal(Base):
