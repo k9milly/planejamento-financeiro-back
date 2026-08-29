@@ -620,10 +620,10 @@ class AlertaFaturaOut(BaseModel):
     nome_cartao: str
     dia_vencimento_fatura: int
     dias_restantes: int
-    # Sempre nulo por enquanto: o valor em aberto depende do cálculo do mês
-    # inteiro, e quem precisa do número chama o endpoint da fatura. O alerta
-    # aqui é sobre a data.
-    valor: Decimal | None = None
+    # O valor em aberto do mês, recalculado — mesma conta que
+    # `GET .../fatura/{mes}` devolve. Nunca nulo: uma fatura sem valor em
+    # aberto não vira alerta (ver `routers/alertas.py`).
+    valor: Decimal
 
 
 # União discriminada por `tipo`: os dois formatos têm campos com nomes
