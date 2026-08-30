@@ -65,7 +65,7 @@ validação depende do tipo, não só da existência. Os três chamadores
 ### Endpoints afetados
 
 - `POST/PATCH /anos/{ano}/lancamentos` — aceitam `forma_pagamento`.
-- `POST /anos/{ano}/importacao/ofx/confirmar` — `TransacaoConfirmar` aceita
+- `POST /anos/{ano}/importacao/confirmar` — `TransacaoConfirmar` aceita
   `forma_pagamento` (opcional; o extrato bancário não informa isso, então a
   prévia nunca sugere um valor — o usuário escolhe na revisão se quiser).
 - `POST/PATCH /anos/{ano}/gastos-fixos` — aceitam `forma_pagamento`.
