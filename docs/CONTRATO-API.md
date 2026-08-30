@@ -71,7 +71,7 @@ export type TipoConta = 'corrente' | 'cartao_credito';
 | `forma_pagamento` | `FormaPagamento \| null` | **novo**. Só aceito quando `tipo=saida` (422 nos demais tipos). `null` é válido e tratado como `debito`. |
 
 Regra de validação nova (`POST`/`PATCH /anos/{ano}/lancamentos`, e também
-em `POST /anos/{ano}/importacao/ofx/confirmar`):
+em `POST /anos/{ano}/importacao/confirmar`):
 
 - `forma_pagamento=credito` ⇒ `conta_id` deve referenciar uma `Conta` com
   `tipo=cartao_credito`. Senão: `422 "Pagamento no crédito exige uma conta
@@ -403,7 +403,7 @@ Se o ano corrente ainda não foi criado, devolve lista vazia.
 | Método | Rota | Novo ou alterado | Depende de |
 | --- | --- | --- | --- |
 | `POST`/`PATCH` | `/anos/{ano}/lancamentos` | alterado — `forma_pagamento` | `TipoConta` já existir |
-| `POST` | `/anos/{ano}/importacao/ofx/confirmar` | alterado — `forma_pagamento` opcional | idem |
+| `POST` | `/anos/{ano}/importacao/confirmar` | alterado — `forma_pagamento` opcional; **rota renomeada** (era `.../importacao/ofx/confirmar`) | idem |
 | `POST`/`PATCH` | `/anos/{ano}/gastos-fixos` | alterado — `forma_pagamento` | idem |
 | `GET`/`POST`/`PATCH`/`DELETE` | `/contas` | alterado — `tipo`, `dia_vencimento_fatura`, `conta_pagamento_padrao_id`, filtro `?tipo=` | — |
 | `GET` | `/anos/{ano}/resumo` | alterado — `por_cartao` em cada mês/ano | `Conta.tipo` + roteamento de crédito |
@@ -419,6 +419,43 @@ Se o ano corrente ainda não foi criado, devolve lista vazia.
 | `GET` | `/metas-poupanca/ativas` | **novo** | agregação de `guardado` já existente |
 | `DELETE` | `/metas-poupanca/{id}` | **novo** | idem |
 | `GET` | `/alertas` | **novo** | `dia_vencimento` de gastos fixos e cartões |
+| `POST` | `/anos/{ano}/importacao/previa` | alterado — **rota renomeada** (era `.../importacao/ofx/previa`) e ganhou o campo `formato` | ADR-08 |
+
+---
+
+## Importação de extrato — CSV, XLSX e OFX (ADR-08)
+
+As duas rotas deixaram de ser específicas de OFX. **O caminho mudou**: onde
+era `/anos/{ano}/importacao/ofx/previa` e `.../ofx/confirmar`, agora é
+`/anos/{ano}/importacao/previa` e `.../confirmar`. Renomear foi seguro porque
+nenhum frontend consumia essas rotas ainda — o caminho antigo responde `404`.
+
+```
+POST /anos/{ano}/importacao/previa
+  multipart/form-data:
+    arquivo: File           (obrigatório)
+    formato: "csv" | "xlsx" | "ofx"   (obrigatório)
+  → 200 PreviaImportacao
+
+POST /anos/{ano}/importacao/confirmar
+  → 201 ResultadoImportacao
+```
+
+`formato` é obrigatório e não é deduzido da extensão do arquivo. Os schemas
+(`PreviaImportacao`, `TransacaoPrevia`, `ConfirmarImportacao`,
+`ResultadoImportacao`) **não mudaram** — os três formatos produzem exatamente
+a mesma prévia, e daí em diante o fluxo é o mesmo.
+
+Layout aceito em CSV/XLSX: colunas `data`, `valor` (com sinal) e `descricao`,
+identificadas pelo nome do cabeçalho, ordem livre, ignorando acentos e
+maiúsculas. O identificador de dedupe (`fitid`) é sintético nesses formatos —
+`data + valor com sinal + descrição` —, o mesmo já usado no OFX sem `FITID`.
+Consequência: o mesmo extrato baixado em CSV e em XLSX não é importado duas
+vezes.
+
+Contrato completo (schemas TypeScript, comportamento esperado da tela para
+`duplicado`/`possivel_repetido`/`fora_do_ano`) na seção 13 de
+`docs/specs/especificacao-tecnica-funcional.md`.
 
 ---
 

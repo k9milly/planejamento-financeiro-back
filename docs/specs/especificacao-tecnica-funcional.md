@@ -808,6 +808,114 @@ lá, `alertas_email_ativo` pode existir na API sem nenhum efeito observável.
 
 ---
 
+## 13. Importação de extrato (`/importacao`) — ADR-08
+
+Tela **nova, do zero** — não existe rota nem componente de importação no
+frontend hoje. O backend, ao contrário, já tinha o subsistema inteiro pronto e
+testado (prévia, confirmação, deduplicação, sugestão de categoria); esta
+rodada só o generalizou de OFX para os três formatos. Ler o `ADR-08` antes de
+desenhar a tela.
+
+### O fluxo tem dois passos, e o primeiro não grava nada
+
+O extrato diz quanto entrou e saiu, mas não o que aquilo significa: um Pix
+recebido pode ser salário ou devolução de um amigo; uma transferência para a
+poupança parece saída, mas é `guardado`. Por isso a prévia é obrigatória —
+o backend sugere, a pessoa decide, e só a confirmação escreve no banco.
+
+### Passo 1 — prévia
+
+```ts
+// POST /anos/{ano}/importacao/previa
+// multipart/form-data — os dois campos são obrigatórios:
+//   arquivo: File
+//   formato: "csv" | "xlsx" | "ofx"
+//
+// O formato NÃO é deduzido da extensão: a tela tem o seletor de qualquer
+// forma, e adivinhar esconderia o engano mais provável (escolher "csv" e
+// enviar o OFX), que hoje responde 422 com mensagem legível.
+
+interface TransacaoPrevia {
+  fitid: string;                        // identificador da transação; a chave do dedupe
+  data: string;                         // "AAAA-MM-DD"
+  valor: string;                        // decimal como string, sempre positivo
+  descricao: string;
+  tipo_sugerido: TipoLancamento;        // vem do sinal do valor: "saida" | "entrada"
+  categoria_sugerida_id: number | null; // só para saídas, e só se houver regra
+  categoria_sugerida_nome: string | null;
+  duplicado: boolean;                   // já existe lançamento com este fitid
+  possivel_repetido: boolean;           // mesma data e valor, fitid diferente
+  fora_do_ano: boolean;                 // data fora do ano sendo editado
+}
+
+interface PreviaImportacao {
+  total_lidas: number;
+  ja_importadas: number;                // quantas vieram com duplicado = true
+  transacoes: TransacaoPrevia[];
+}
+```
+
+Erros possíveis: `422` com `detail` legível (arquivo vazio, formato errado,
+planilha sem as colunas esperadas, data ou valor ilegível — a mensagem cita a
+linha), `413` (acima de 10 MB) e `409` (o ano está arquivado).
+
+### Passo 2 — confirmação
+
+```ts
+// POST /anos/{ano}/importacao/confirmar → 201
+interface TransacaoConfirmar {
+  fitid: string;                        // devolver o mesmo que veio da prévia
+  data: string;
+  valor: string;                        // positivo
+  tipo: TipoLancamento;
+  conta_id: number;                     // ver "a conta" abaixo
+  conta_destino_id?: number | null;     // transferência
+  destino?: DestinoRendimento | null;
+  categoria_id?: number | null;
+  forma_pagamento?: FormaPagamento | null;  // o extrato não informa; opcional
+  descricao?: string;
+  aprender_padrao?: string | null;      // cria a regra de categorização
+}
+
+interface ResultadoImportacao {
+  importadas: number;
+  ignoradas_duplicadas: number;         // revalidado no servidor, não confia na prévia
+  regras_criadas: number;
+}
+```
+
+**A conta** é pedida por transação, mas raramente muda dentro de um arquivo:
+a tela pode ter um seletor único no topo da prévia e aplicá-lo a todas as
+linhas ao montar o payload. Nenhuma mudança de backend é necessária para isso.
+
+### O que a tela precisa fazer com os três sinalizadores
+
+| Sinalizador | Comportamento esperado na tela |
+| --- | --- |
+| `duplicado` | Ocultar por padrão, com um "mostrar duplicadas" para conferir. Não adianta enviar: o backend ignora na confirmação de qualquer jeito. |
+| `possivel_repetido` | Mostrar em destaque e **desmarcada por padrão** — opt-in, não opt-out, para não duplicar lançamento quando a pessoa passa o olho rápido. |
+| `fora_do_ano` | Desmarcada e sinalizada. Se for enviada mesmo assim, a confirmação inteira responde `422`. |
+
+### Layout aceito em CSV e XLSX
+
+Três colunas identificadas **pelo nome do cabeçalho**, em qualquer ordem,
+ignorando acentos e maiúsculas: `data`, `valor`, `descricao`. Valor **com
+sinal** (negativo = saída), data em `AAAA-MM-DD` ou `DD/MM/AAAA`. O parser
+tolera preâmbulo antes do cabeçalho, separador `;`/`,`/tabulação, BOM do
+Excel, Latin-1, `R$` e separador de milhar.
+
+É um formato **da aplicação**, não o export nativo de um banco — ainda não
+conferido contra um arquivo real. Se divergir, o ajuste é isolado dentro de
+`app/services/tabular.py` no backend e **não muda nada nesta seção**.
+
+### Opcional nesta rodada, mas sem custo de backend
+
+`aprender_padrao` já existe: ao corrigir a categoria de uma linha, oferecer um
+"lembrar essa categoria da próxima vez" grava a regra junto com a confirmação
+e a sugestão passa a vir pronta nas importações seguintes.
+
+---
+
 ## Resumo — todos os endpoints usados por esta integração
 
 | Método | Rota | Usado por |
@@ -824,6 +932,8 @@ lá, `alertas_email_ativo` pode existir na API sem nenhum efeito observável.
 | `PATCH` | `/auth/eu` | Perfil → nome, preferência de alerta por e-mail (seção 12, ADR-06) |
 | `GET`/`POST`/`DELETE` | `/metas-poupanca`, `GET /metas-poupanca/ativas` | Perfil e `/metas` → meta de poupança real (seção 12, ADR-06) |
 | `GET` | `/alertas` | Painel de alertas de vencimento (seção 12, ADR-06) |
+| `POST` | `/anos/{ano}/importacao/previa`, `.../confirmar` | Tela de importação de extrato (seção 13, ADR-08) |
+| `GET`/`POST`/`DELETE` | `/regras` | Regras de categorização usadas pela importação (seção 13) |
 
 Todos os endpoints das seções 1–11 já existiam e foram conferidos linha a
 linha contra o código real do backend — nenhum precisou ser criado para

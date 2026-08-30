@@ -265,6 +265,48 @@ interface depois que esta fase estiver em produção — combinar esse timing
 com a conversa do front antes de anunciar a Fase 4 como "pronta" para eles
 integrarem o toggle.
 
+## Fase 6 — Importação de extrato: generalizar para CSV e XLSX (ADR-08)
+
+**Feito em 30/08/2026.** Registro do que foi implementado abaixo.
+
+**O quê:** o subsistema de importação de extrato já existia e funcionava —
+prévia + confirmação, deduplicação por `fitid`, sugestão de categoria via
+`/regras` — mas só lia OFX. O `ADR-08` explica por que a decisão foi
+generalizar em vez de recriar do zero.
+
+- Dois parsers novos, `ler_csv` e `ler_xlsx`, em `app/services/tabular.py`,
+  espelhando a assinatura de `ler_ofx` (bytes → lista normalizada). Layout
+  aceito: colunas `data`/`valor`/`descricao` por nome de cabeçalho,
+  ignorando acentos e maiúsculas, ordem livre — ver seção 13 da Parte 1.
+- O tipo normalizado saiu de dentro do leitor de OFX: `TransacaoOFX` virou
+  `TransacaoExtrato`, em `app/services/extrato.py`, junto com o erro base
+  `ErroExtrato` e o cálculo do identificador sintético. Do roteador para
+  dentro, nada sabe de qual formato a transação veio.
+- `POST /anos/{ano}/importacao/ofx/previa` e `.../ofx/confirmar` viraram
+  `POST /anos/{ano}/importacao/previa` e `.../confirmar`, com `formato`
+  (`csv`/`xlsx`/`ofx`) obrigatório no multipart da prévia. Os schemas de
+  resposta não mudaram. O rename foi seguro: uma busca no repositório do
+  front confirmou zero ocorrências de `importacao`/`ofx` no código dele.
+- Nenhuma migração e nenhuma dependência nova — `Lancamento.fitid` e
+  `RegraCategorizacao` já sustentavam os três formatos, e o `openpyxl` já
+  estava no `requirements.txt` por causa dos scripts da planilha antiga.
+
+**Critério de aceite — atendido:** importar o mesmo extrato CSV ou XLSX duas
+vezes não duplica lançamento (`test_reimportar_o_mesmo_extrato_nao_duplica`
+parametrizado nos dois formatos novos); uma transação com mesma data/valor de
+uma existente, mas descrição diferente, vem `possivel_repetido`, não
+`duplicado`. A suíte inteira passa: 244 testes, 37 deles novos.
+
+**Um teste a mais do que o critério pedia:** o mesmo extrato baixado em CSV e
+em XLSX também não duplica. Como os dois usam o identificador sintético e ele
+não depende do formato, isso já era verdade — o teste existe para que continue
+sendo, já que baixar o extrato nos dois formatos é um engano fácil de cometer.
+
+**Pendência conhecida:** o layout de colunas nunca foi conferido contra um
+arquivo CSV/XLSX real do banco da Kamilly. Se divergir, o ajuste é mapear
+nomes de coluna dentro de `tabular.py` — nada fora dele sabe como o arquivo é
+feito, e nem o contrato nem a tela mudam.
+
 ## Fora desta rodada (decisões já registradas nas Partes 1 e 2, não tarefas)
 
 - Nenhum endpoint de orçamento/meta por categoria (`budgets`, dentro da tela
