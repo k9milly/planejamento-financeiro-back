@@ -448,10 +448,13 @@ a mesma prévia, e daí em diante o fluxo é o mesmo.
 
 Layout aceito em CSV/XLSX: colunas `data`, `valor` (com sinal) e `descricao`,
 identificadas pelo nome do cabeçalho, ordem livre, ignorando acentos e
-maiúsculas. O identificador de dedupe (`fitid`) é sintético nesses formatos —
-`data + valor com sinal + descrição` —, o mesmo já usado no OFX sem `FITID`.
-Consequência: o mesmo extrato baixado em CSV e em XLSX não é importado duas
-vezes.
+maiúsculas — mais uma quarta coluna **opcional**, `identificador`. O extrato
+em CSV do Nubank passa nesse layout sem ajuste, e traz essa quarta coluna.
+
+O identificador de dedupe (`fitid`) vem dessa coluna quando ela existe; senão
+é sintetizado de `data + valor com sinal + descrição`, o mesmo já usado no OFX
+sem `FITID`. Consequência do sintético: o mesmo extrato baixado em CSV e em
+XLSX não é importado duas vezes.
 
 Contrato completo (schemas TypeScript, comportamento esperado da tela para
 `duplicado`/`possivel_repetido`/`fora_do_ano`) na seção 13 de

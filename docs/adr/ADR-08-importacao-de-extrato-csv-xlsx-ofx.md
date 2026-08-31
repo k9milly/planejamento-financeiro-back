@@ -74,9 +74,26 @@ separador `;`, `,` ou tabulação, BOM do Excel, Latin-1, `R$`, separador de
 milhar (`-1.234,56` e `-1,234.56` são o mesmo número) e linhas em branco.
 
 Esse é um formato **da própria aplicação**, não o export nativo de um banco
-específico. Se o arquivo real da Kamilly usar outros nomes de coluna, o ajuste
-é mapear nomes dentro de `tabular.py` — nada fora dele sabe como o arquivo é
-feito. **Isso ainda não foi conferido contra um arquivo real do banco dela.**
+específico. Se o arquivo real usar outros nomes de coluna, o ajuste é mapear
+nomes dentro de `tabular.py` — nada fora dele sabe como o arquivo é feito.
+
+**Conferido contra arquivos reais em 31/08/2026:**
+
+- **Nubank, extrato em CSV** — passa sem ajuste nenhum. Cabeçalho
+  `Data,Valor,Identificador,Descrição`; valor com sinal e ponto decimal;
+  data em `DD/MM/AAAA`. Trouxe uma descoberta: a coluna `Identificador`, um
+  UUID por transação. O desenho supunha que planilha nunca traz identificador
+  de transação — o Nubank traz. Virou uma **quarta coluna opcional**: quando
+  presente, ela vira o `fitid` no lugar do sintético, com a mesma hierarquia
+  que o leitor de OFX já usa entre ter e não ter `FITID`.
+- **Mercado Pago, fatura do cartão** — não passa, e não é problema de nome de
+  coluna. O arquivo era um PDF convertido: o cabeçalho até é de três colunas
+  (`Data`, `Movimentações`, `Valor em R$`), mas as linhas de baixo não são
+  colunas — data, descrição e valor vêm fundidos numa célula só
+  (`26/07MERCADOLIVRE*MERCADOLIVRER$ 133,56`). Ler aquilo exigiria um leitor
+  dedicado, acoplado ao conversor de PDF usado, e é uma decisão em aberto.
+  Também expôs um defeito real, já corrigido: a detecção de separador olhava
+  só a primeira linha, que num arquivo com preâmbulo não tem separador nenhum.
 
 ### 3. Erros são ruidosos na planilha, silenciosos no OFX
 
@@ -88,9 +105,15 @@ descartar em silêncio importaria meio extrato sem ninguém perceber. Então
 
 ### 4. Deduplicação — reaproveitar, não recriar
 
-CSV e XLSX nunca têm identificador de transação, então sempre caem no mesmo
-identificador sintético que o backend já calcula e já testa para o OFX sem
-`FITID`: `data + valor (com sinal) + descrição (até 40 caracteres)`.
+A hierarquia é a mesma nos três formatos: **usa o identificador do banco
+quando ele existe** — `FITID` no OFX, coluna `identificador` no CSV/XLSX — e
+sintetiza um quando não existe, de `data + valor (com sinal) + descrição (até
+40 caracteres)`.
+
+A versão original deste ADR afirmava que "CSV e XLSX nunca têm identificador de
+transação". O extrato do Nubank desmentiu isso (ver ponto 2), e a regra ficou
+mais simples do que a suposição errada: não é o formato que decide, é ter ou
+não ter o campo.
 
 O sinal faz parte da chave: sem ele, um Pix enviado e um recebido de mesmo dia
 e mesmo montante colidiriam e o segundo sumiria como duplicata. Consequência
@@ -125,8 +148,9 @@ Não existe nada hoje; é a maior parte do trabalho deste item. Ver seção 13 d
   pelos scripts de importação da planilha antiga) e o `csv` é da biblioteca
   padrão.
 - Frontend: tela nova inteira, sem nada reaproveitável de tela anterior.
-- Testes: 26 novos em `tests/test_tabular.py` (parsers) e 11 em
-  `tests/test_importacao.py` (fluxo nos três formatos).
+- Testes: 35 novos em `tests/test_tabular.py` (parsers) e 11 em
+  `tests/test_importacao.py` (fluxo nos três formatos). A suíte inteira passa
+  com 248.
 
 ## Alternativas consideradas
 

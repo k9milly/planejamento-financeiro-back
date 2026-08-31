@@ -9,7 +9,10 @@ um formato **da própria aplicação**, deliberadamente mínimo (ver ADR-08):
   `data`, `valor`, `descricao` (acentos e maiúsculas são ignorados);
 * `valor` com sinal, na mesma convenção do OFX — negativo é saída, positivo é
   entrada;
-* `data` em `AAAA-MM-DD` ou `DD/MM/AAAA`.
+* `data` em `AAAA-MM-DD` ou `DD/MM/AAAA`;
+* opcionalmente uma quarta coluna, `identificador`, com o id que o banco dá à
+  transação. O extrato em CSV do Nubank traz essa coluna; quando ela existe,
+  a deduplicação fica exata em vez de aproximada.
 
 Se o extrato de um banco específico usar outros nomes de coluna, o ajuste é
 mapear nomes aqui dentro: nada fora deste módulo sabe como o arquivo é feito.
@@ -39,6 +42,12 @@ from app.services.extrato import (
 
 COLUNAS = ("data", "valor", "descricao")
 
+# Coluna opcional. O extrato em CSV do Nubank traz um UUID por transação
+# ("Identificador"), que é exatamente o papel do FITID no OFX: identificador
+# estável do lado do banco. Quando existe, ele vale mais do que o sintético,
+# porque não confunde duas compras iguais no mesmo dia.
+COLUNA_IDENTIFICADOR = "identificador"
+
 # Quantas linhas procurar até desistir de achar o cabeçalho. Alguns exports
 # trazem título, CNPJ e período antes dele; passando muito disso, o arquivo
 # provavelmente não é um extrato no layout esperado.
@@ -65,11 +74,18 @@ def _texto(celula: object) -> str:
 
 
 def _achar_cabecalho(linhas: list[list[object]]) -> tuple[int, dict[str, int]]:
-    """Índice da linha de cabeçalho e a posição de cada coluna nela."""
+    """Índice da linha de cabeçalho e a posição de cada coluna nela.
+
+    O mapa devolvido tem sempre as três colunas obrigatórias, e mais
+    `identificador` quando o arquivo trouxer essa coluna.
+    """
     for numero, linha in enumerate(linhas[:LINHAS_ATE_O_CABECALHO]):
         nomes = {_normalizar(_texto(c)): i for i, c in enumerate(linha)}
         if all(coluna in nomes for coluna in COLUNAS):
-            return numero, {coluna: nomes[coluna] for coluna in COLUNAS}
+            achadas = {coluna: nomes[coluna] for coluna in COLUNAS}
+            if COLUNA_IDENTIFICADOR in nomes:
+                achadas[COLUNA_IDENTIFICADOR] = nomes[COLUNA_IDENTIFICADOR]
+            return numero, achadas
 
     raise ErroTabular(
         "Não encontrei as colunas data, valor e descricao no cabeçalho. "
@@ -137,8 +153,10 @@ def _transacoes(linhas: list[list[object]]) -> list[TransacaoExtrato]:
             continue  # linha em branco: separador visual ou sobra do export
 
         def celula(coluna: str, linha=linha) -> object:
-            posicao = colunas[coluna]
-            return linha[posicao] if posicao < len(linha) else None
+            posicao = colunas.get(coluna)
+            if posicao is None or posicao >= len(linha):
+                return None
+            return linha[posicao]
 
         valor = _para_valor(celula("valor"), numero)
         if valor == 0:
@@ -149,9 +167,10 @@ def _transacoes(linhas: list[list[object]]) -> list[TransacaoExtrato]:
 
         transacoes.append(
             TransacaoExtrato(
-                # Planilha nunca traz identificador de transação — sempre o
-                # sintético, o mesmo que o OFX sem FITID usa.
-                fitid=identificador_sintetico(quando, valor, descricao),
+                # Quando o banco dá um identificador, ele ganha do sintético —
+                # mesma hierarquia do leitor de OFX com e sem `FITID`.
+                fitid=_texto(celula(COLUNA_IDENTIFICADOR))
+                or identificador_sintetico(quando, valor, descricao),
                 data=quando,
                 valor=abs(valor),
                 saida=valor < 0,
