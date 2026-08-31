@@ -44,7 +44,9 @@ COLUNAS = ("data", "valor", "descricao")
 # provavelmente não é um extrato no layout esperado.
 LINHAS_ATE_O_CABECALHO = 20
 
-_DELIMITADORES = (";", ",", "\t")
+# A vírgula vem primeiro de propósito: `max` devolve o primeiro em caso de
+# empate, e o empate que importa é o de zero — nenhum candidato no arquivo.
+_DELIMITADORES = (",", ";", "\t")
 
 
 class ErroTabular(ErroExtrato):
@@ -179,13 +181,20 @@ def _decodificar(conteudo: bytes) -> str:
 
 
 def _delimitador(texto: str) -> str:
-    """O separador mais frequente na primeira linha não vazia.
+    """O separador mais frequente no começo do arquivo.
 
     `csv.Sniffer` erra justamente no caso brasileiro mais comum — vírgula
     decimal com separador `;` —, então a contagem direta é mais confiável aqui.
+
+    Não dá para olhar só a primeira linha: um export com preâmbulo começa com
+    linhas de texto corrido, sem separador nenhum, e a contagem daria zero para
+    todos os candidatos. Por isso a amostra vai até o ponto onde o cabeçalho
+    ainda pode estar, e o empate em zero cai na vírgula — o separador que o
+    nome do formato promete.
     """
-    primeira = next((linha for linha in texto.splitlines() if linha.strip()), "")
-    return max(_DELIMITADORES, key=primeira.count)
+    amostra = [linha for linha in texto.splitlines() if linha.strip()]
+    amostra = amostra[:LINHAS_ATE_O_CABECALHO]
+    return max(_DELIMITADORES, key=lambda d: sum(linha.count(d) for linha in amostra))
 
 
 def ler_csv(conteudo: bytes) -> list[TransacaoExtrato]:

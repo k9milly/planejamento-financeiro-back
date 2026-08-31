@@ -183,3 +183,46 @@ class TestIdentificador:
         conteudo = b"data;valor;descricao\n2026-08-05;-50;PADARIA\n2026-08-05;-50;UBER\n"
         primeiro, segundo = ler_csv(conteudo)
         assert primeiro.fitid != segundo.fitid
+
+
+class TestDelimitador:
+    """Regressões achadas ao rodar o parser contra um arquivo real.
+
+    O detector olhava só a primeira linha não vazia. Num arquivo com
+    preâmbulo, essa linha é texto corrido sem separador nenhum, a contagem
+    dava zero para todos os candidatos e vencia quem estivesse primeiro na
+    lista — `;`, por acaso da ordem.
+    """
+
+    def test_preambulo_sem_separador_nao_confunde_a_deteccao(self):
+        conteudo = (
+            '"Fatura de agosto"\n'
+            '"Emitida em: 09/08/2026"\n'
+            "data,valor,descricao\n"
+            "2026-08-05,-30.00,MERCADO\n"
+        ).encode("utf-8")
+        assert ler_csv(conteudo)[0].descricao == "MERCADO"
+
+    def test_ponto_e_virgula_ainda_ganha_quando_existe(self):
+        conteudo = (
+            '"Fatura de agosto"\n'
+            "data;valor;descricao\n"
+            "2026-08-05;-30,00;MERCADO, COM VIRGULA\n"
+        ).encode("utf-8")
+        transacao = ler_csv(conteudo)[0]
+        assert transacao.descricao == "MERCADO, COM VIRGULA"
+        assert transacao.valor == Decimal("30.00")
+
+    def test_tabulacao_tambem_e_detectada(self):
+        conteudo = b"data\tvalor\tdescricao\n2026-08-05\t-30.00\tMERCADO\n"
+        assert ler_csv(conteudo)[0].descricao == "MERCADO"
+
+    def test_sem_nenhum_separador_o_desempate_e_a_virgula(self):
+        """Uma coluna só não é layout válido, mas o erro tem que ser o certo.
+
+        Com o desempate errado o arquivo era lido como se fosse `;`, e o
+        diagnóstico saía deslocado do problema real.
+        """
+        from app.services.tabular import _delimitador
+
+        assert _delimitador("uma linha sem separador nenhum\noutra igual\n") == ","
