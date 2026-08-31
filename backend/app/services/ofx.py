@@ -16,9 +16,14 @@ regular, o que funciona nos dois formatos: `<TAG>valor` casa tanto com
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal, InvalidOperation
+
+from app.services.extrato import (
+    ErroExtrato,
+    TransacaoExtrato,
+    identificador_sintetico,
+)
 
 # Um lançamento no extrato. `</STMTTRN>` fecha mesmo no formato 1.x.
 _TRANSACAO = re.compile(r"<STMTTRN>(.*?)</STMTTRN>", re.DOTALL | re.IGNORECASE)
@@ -29,23 +34,8 @@ def _campo(bloco: str, tag: str) -> str | None:
     return achado.group(1).strip() if achado else None
 
 
-class ErroOFX(ValueError):
+class ErroOFX(ErroExtrato):
     """Arquivo ilegível ou sem transações."""
-
-
-@dataclass(frozen=True)
-class TransacaoOFX:
-    """Uma transação do extrato, já normalizada.
-
-    `valor` é sempre positivo; `saida` diz o sentido — a mesma convenção do
-    resto do sistema, onde o sinal vem do tipo e não do número.
-    """
-
-    fitid: str
-    data: date
-    valor: Decimal
-    saida: bool
-    descricao: str
 
 
 def _decodificar(conteudo: bytes) -> str:
@@ -82,7 +72,7 @@ def _para_data(bruto: str) -> date | None:
         return None
 
 
-def ler_ofx(conteudo: bytes) -> list[TransacaoOFX]:
+def ler_ofx(conteudo: bytes) -> list[TransacaoExtrato]:
     """Extrai as transações do extrato.
 
     Levanta `ErroOFX` se o arquivo não tiver nenhuma transação — quase sempre
@@ -97,7 +87,7 @@ def ler_ofx(conteudo: bytes) -> list[TransacaoOFX]:
             "extrato OFX exportado pelo banco."
         )
 
-    transacoes: list[TransacaoOFX] = []
+    transacoes: list[TransacaoExtrato] = []
     for bloco in blocos:
         bruto_valor = _campo(bloco, "TRNAMT")
         quando = _para_data(_campo(bloco, "DTPOSTED") or "")
@@ -119,11 +109,12 @@ def ler_ofx(conteudo: bytes) -> list[TransacaoOFX]:
         descricao = _campo(bloco, "MEMO") or _campo(bloco, "NAME") or ""
 
         transacoes.append(
-            TransacaoOFX(
+            TransacaoExtrato(
                 # Sem FITID não há como deduplicar; o par data+valor+descrição é
-                # o identificador menos ruim disponível.
+                # o identificador menos ruim disponível — o mesmo que CSV e XLSX
+                # usam sempre, já que nesses formatos ele nunca existe.
                 fitid=_campo(bloco, "FITID")
-                or f"{quando.isoformat()}|{valor}|{descricao[:40]}",
+                or identificador_sintetico(quando, valor, descricao),
                 data=quando,
                 valor=abs(valor),
                 saida=valor < 0,
