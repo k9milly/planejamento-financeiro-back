@@ -1,18 +1,23 @@
-"""Importação de extrato bancário em OFX.
+"""Importação de extrato bancário em OFX, CSV ou XLSX.
 
 O fluxo tem dois passos de propósito: **prévia** e **confirmação**. Nada é
 gravado no primeiro. Um extrato traz transações que o app não consegue
 classificar sozinho — um Pix recebido pode ser salário ou devolução de um
 amigo, e uma transferência para a poupança parece uma saída comum. Quem decide
 é o usuário, na tela de revisão.
+
+O formato do arquivo só importa na primeira linha da prévia, onde um leitor é
+escolhido; da leitura em diante tudo é `TransacaoExtrato` e o resto do fluxo —
+dedupe, sugestão de categoria, confirmação — é o mesmo para os três (ADR-08).
 """
 
 from __future__ import annotations
 
 import unicodedata
-from datetime import date
+from collections.abc import Callable
+from typing import Literal
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -33,13 +38,23 @@ from app.schemas import (
     validar_coerencia,
     validar_conta_compativel,
 )
-from app.services.ofx import ErroOFX, ler_ofx
+from app.services.extrato import ErroExtrato, TransacaoExtrato
+from app.services.ofx import ler_ofx
+from app.services.tabular import ler_csv, ler_xlsx
 
 router = APIRouter(prefix="/anos/{ano}/importacao", tags=["importação"])
 
-# Extratos são arquivos de texto pequenos; qualquer coisa maior que isso não é
-# um extrato e não vale a pena carregar na memória.
+# Extratos são arquivos pequenos; qualquer coisa maior que isso não é um
+# extrato e não vale a pena carregar na memória.
 TAMANHO_MAXIMO = 10 * 1024 * 1024
+
+Formato = Literal["ofx", "csv", "xlsx"]
+
+LEITORES: dict[str, Callable[[bytes], list[TransacaoExtrato]]] = {
+    "ofx": ler_ofx,
+    "csv": ler_csv,
+    "xlsx": ler_xlsx,
+}
 
 
 def normalizar(texto: str) -> str:
@@ -69,12 +84,13 @@ def _sugerir_categoria(
 
 
 @router.post(
-    "/ofx/previa",
+    "/previa",
     response_model=PreviaImportacao,
-    summary="Lê um extrato OFX e devolve a prévia, sem gravar nada",
+    summary="Lê um extrato e devolve a prévia, sem gravar nada",
 )
 async def previa(
-    arquivo: UploadFile = File(..., description="Extrato .ofx exportado pelo banco"),
+    arquivo: UploadFile = File(..., description="Extrato exportado pelo banco"),
+    formato: Formato = Form(..., description="Formato do arquivo enviado"),
     ano_ref: Ano = Depends(obter_ano_editavel),
     db: Session = Depends(get_db),
 ) -> PreviaImportacao:
@@ -88,12 +104,12 @@ async def previa(
     if len(conteudo) > TAMANHO_MAXIMO:
         raise HTTPException(
             status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            detail="Arquivo muito grande para ser um extrato OFX.",
+            detail="Arquivo muito grande para ser um extrato.",
         )
 
     try:
-        transacoes = ler_ofx(conteudo)
-    except ErroOFX as erro:
+        transacoes = LEITORES[formato](conteudo)
+    except ErroExtrato as erro:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(erro)
         ) from erro
@@ -150,7 +166,7 @@ async def previa(
 
 
 @router.post(
-    "/ofx/confirmar",
+    "/confirmar",
     response_model=ResultadoImportacao,
     status_code=status.HTTP_201_CREATED,
     summary="Grava as transações revisadas",

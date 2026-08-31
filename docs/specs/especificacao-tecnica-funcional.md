@@ -207,6 +207,15 @@ nunca antes de somar/comparar.
   `GET /anos/{ano}/lancamentos?mes={mes}` (ver seção 2) ordenado por data,
   já que o resumo não traz a lista crua.
 
+### Dashboard clicável → Lançamentos filtrado (ADR-07)
+
+Os cards **"Entradas do Período"** e **"Saídas do Período"** viram links
+para `/lancamentos?tipo=entrada` e `/lancamentos?tipo=saida`, com `cursor:
+pointer` e feedback visual de hover. O mês não entra na URL — Dashboard e
+Lançamentos já compartilham o mesmo mês/ano via `usePeriod()` (contexto
+global), então o filtro de mês chega correto sem trabalho adicional. Ver
+seção 2 para o lado de Lançamentos (como `tipo` é lido da URL).
+
 ---
 
 ## 2. Lançamentos (`/lancamentos`)
@@ -324,6 +333,15 @@ pontos, em ordem de impacto:
 4. **Categoria é uma lista fixa no cliente (`CATEGORIES`), não
    `categoria_id`.** Precisa vir de `GET /categorias` (ver seção 5) e o
    formulário precisa enviar o `id`, não o nome.
+
+### Filtro por tipo via URL (ADR-07)
+
+A rota `/lancamentos` ganha `validateSearch` (TanStack Router) aceitando
+`tipo?: TipoLancamento`. Ao montar a página, se `tipo` vier na URL,
+inicializa o `useState` `tipoFiltro` já existente com esse valor — sem
+criar um segundo lugar para esse estado morar. O backend já aceita `tipo`
+(e `mes`) como query params em `GET /anos/{ano}/lancamentos` hoje —
+nenhuma mudança de backend para este item.
 
 ---
 
@@ -694,6 +712,14 @@ integração, passa a ler dos mesmos hooks de React Query das seções 8 e 9
 mudança de lógica de marcação de dia, só troca a origem dos dois arrays que
 já consome.
 
+### Tooltip ao passar o mouse sobre um dia (ADR-07)
+
+Hover num dia com algo agendado mostra um **tooltip flutuante** (não
+altera o layout dos dias vizinhos) listando todos os itens agendados
+daquele dia, não só o primeiro. Em mobile, sem hover: tap no dia
+abre/fecha o tooltip. Puramente visual — nenhum dado novo, nenhum
+endpoint novo.
+
 ---
 
 ## 12. Perfil real, Meta de Poupança e Alertas de Vencimento (ADR-06)
@@ -808,6 +834,171 @@ lá, `alertas_email_ativo` pode existir na API sem nenhum efeito observável.
 
 ---
 
+## 13. Importação de extrato bancário — CSV, XLSX e OFX (ADR-08)
+
+Ver `docs/adr/ADR-08-*.md` para o raciocínio completo. Diferente das
+seções anteriores, isto **não é um contrato 100% novo**: o backend já tem
+um subsistema de importação completo para OFX (prévia + confirmação,
+deduplicação, sugestão de categoria) — o que muda aqui é generalizar para
+CSV/XLSX e construir a tela no frontend, que hoje não existe.
+
+**Status do backend (30/08/2026):** a generalização já está implementada e
+testada — as duas rotas abaixo respondem para os três formatos, e o caminho
+antigo (`/importacao/ofx/previa`, `.../ofx/confirmar`) responde `404`. O que
+falta deste item é só a tela.
+
+### Fluxo
+
+Dois passos, de propósito — nada é gravado na prévia:
+
+```ts
+// POST /anos/{ano}/importacao/previa
+// multipart: arquivo (File) + formato: "csv" | "xlsx" | "ofx"
+// Os dois campos são obrigatórios. O formato NÃO é deduzido da extensão:
+// a tela tem o seletor de qualquer forma, e adivinhar esconderia o engano
+// mais provável — escolher "csv" e enviar o OFX, que hoje dá 422 legível.
+
+interface TransacaoPrevia {
+  fitid: string;                       // identificador de dedupe — ver nota abaixo
+  data: string;                        // "YYYY-MM-DD"
+  valor: string;                       // Decimal como string, sempre positivo
+  descricao: string;
+  // No OpenAPI o campo é TipoLancamento (os 7 valores), mas a prévia só
+  // produz estes dois — o sentido vem do sinal do valor no extrato:
+  tipo_sugerido: "entrada" | "saida";
+  categoria_sugerida_id: number | null;
+  categoria_sugerida_nome: string | null;
+  duplicado: boolean;        // já existe lançamento com este fitid — ignorado na confirmação, sem perguntar
+  possivel_repetido: boolean; // mesma data+valor de um lançamento existente, fitid diferente — vai para a tela de conferência
+  fora_do_ano: boolean;       // data fora do ano sendo editado
+}
+
+interface PreviaImportacao {
+  total_lidas: number;
+  ja_importadas: number;      // quantas já são `duplicado`
+  transacoes: TransacaoPrevia[];
+}
+```
+
+```ts
+// POST /anos/{ano}/importacao/confirmar
+
+interface TransacaoConfirmar {
+  fitid: string;
+  data: string;
+  valor: string;              // > 0
+  tipo: TipoLancamento;
+  conta_id: number;           // escolhida na tela, não no upload — ver decisão abaixo
+  conta_destino_id?: number | null;
+  destino?: "conta" | "guardado" | null;
+  categoria_id?: number | null;
+  forma_pagamento?: "credito" | "debito" | "pix" | "dinheiro" | null;
+  descricao?: string;
+  aprender_padrao?: string | null;  // opcional: grava regra de categorização ao confirmar
+}
+
+interface ConfirmarImportacao {
+  transacoes: TransacaoConfirmar[];
+}
+
+interface ResultadoImportacao {
+  importadas: number;
+  ignoradas_duplicadas: number;   // revalidado no servidor, mesmo que o front já tenha filtrado
+  regras_criadas: number;
+}
+```
+
+### Erros
+
+Ambas as rotas devolvem `{ detail: string }` legível (ADR-01) — a mensagem
+pode ir direto para a tela:
+
+| Código | Quando |
+| --- | --- |
+| `422` | Arquivo vazio; formato errado para o arquivo enviado; planilha sem as colunas esperadas; data ou valor ilegível (**a mensagem cita a linha**); na confirmação, transação com data fora do ano |
+| `413` | Arquivo acima de 10 MB |
+| `409` | O ano está arquivado |
+
+Na confirmação, uma única linha `fora_do_ano` faz a chamada **inteira**
+falhar com `422` — nada é gravado. A tela precisa filtrar essas linhas antes
+de enviar, não confiar em o backend ignorá-las.
+
+### Deduplicação — `fitid`
+
+Para OFX, `fitid` vem do próprio arquivo (`FITID`) quando existe; quando
+não existe, e **sempre** para CSV/XLSX (que não têm identificador de
+transação nativo), o backend sintetiza um identificador estável a partir
+de `data + valor com sinal + descrição (até 40 caracteres)` — já
+implementado e testado para o caso OFX-sem-FITID, reaproveitado sem mudança
+para os formatos novos. Único por `(ano, fitid)`, o que faz `duplicado` e a
+idempotência de reimportar o mesmo extrato funcionarem de graça.
+
+**O sinal faz parte da chave** (a versão anterior desta seção dizia só "data
++ valor"): sem ele, um Pix enviado e um recebido no mesmo dia, de mesmo
+valor e mesma descrição, colidiriam e o segundo sumiria como duplicata.
+
+Como a regra não depende do formato, o **mesmo extrato baixado em CSV e em
+XLSX** gera os mesmos identificadores — importar os dois não duplica nada.
+Isso é coberto por teste no backend, não é só consequência teórica.
+
+### Layout aceito para CSV/XLSX
+
+Três colunas, identificadas pelo nome do cabeçalho (case-insensitive,
+ordem livre): `data` (`AAAA-MM-DD` ou `DD/MM/AAAA`), `valor` (negativo =
+saída, positivo = entrada, mesma convenção do OFX), `descricao`. É um
+layout genérico da própria aplicação, não o export nativo de nenhum
+banco — se o extrato real do banco da Kamilly tiver colunas diferentes,
+é um ajuste isolado só no parser, sem afetar o resto do contrato.
+
+**Confirmado contra um arquivo real (31/08/2026):** o extrato em CSV do
+Nubank passa neste layout sem nenhum ajuste — o cabeçalho dele é
+`Data,Valor,Identificador,Descrição`, e os três nomes obrigatórios casam
+(acento e maiúscula são ignorados).
+
+**Quarta coluna, opcional: `identificador`.** O Nubank traz um UUID por
+transação, que é o mesmo papel do `FITID` no OFX. Quando a coluna existe,
+o `fitid` da prévia é esse valor em vez do sintético — a deduplicação fica
+exata, e duas compras iguais no mesmo dia deixam de ser confundidas. Quando
+não existe (ou está vazia naquela linha), cai no sintético como antes. Nada
+muda para a tela: `fitid` continua sendo uma string opaca que ela devolve
+igual na confirmação.
+
+Além do mínimo acima, o parser já tolera o que um arquivo real costuma
+trazer, sem que isso mude o layout combinado: linhas de preâmbulo antes do
+cabeçalho, separador `;`, `,` ou tabulação, BOM do Excel, Latin-1, `R$` e
+separador de milhar (`-1.234,56` e `-1,234.56` são o mesmo número). Linhas
+em branco e linhas com valor zero são ignoradas.
+
+O que ele **não** faz é engolir erro em silêncio: uma data ou um valor
+ilegível interrompe a importação citando a linha. Numa planilha isso quase
+sempre significa que a coluna inteira veio num formato não previsto, e
+importar metade calado seria pior do que recusar.
+
+### Tela de importação (frontend — não existe hoje)
+
+1. Seletor de formato (CSV/XLSX/OFX) + upload do arquivo + seletor de
+   conta (aplicado a todas as linhas do lote na confirmação).
+2. Tela de conferência: uma linha por transação. `duplicado` fica oculta
+   por padrão (com opção de mostrar). `possivel_repetido` aparece
+   destacada e **desmarcada por padrão** — opt-in para importar, não
+   opt-out, para não duplicar por engano.
+3. Confirmar envia só o que ficou marcado, com o `conta_id` escolhido no
+   passo 1.
+
+### Regras de categorização (já existem, usadas pela sugestão automática)
+
+```ts
+// GET /regras, POST /regras (cria ou atualiza pelo padrão), DELETE /regras/{id}
+interface RegraOut {
+  id: number;
+  padrao: string;
+  categoria_id: number;
+  categoria: CategoriaOut;
+}
+```
+
+---
+
 ## Resumo — todos os endpoints usados por esta integração
 
 | Método | Rota | Usado por |
@@ -824,11 +1015,14 @@ lá, `alertas_email_ativo` pode existir na API sem nenhum efeito observável.
 | `PATCH` | `/auth/eu` | Perfil → nome, preferência de alerta por e-mail (seção 12, ADR-06) |
 | `GET`/`POST`/`DELETE` | `/metas-poupanca`, `GET /metas-poupanca/ativas` | Perfil e `/metas` → meta de poupança real (seção 12, ADR-06) |
 | `GET` | `/alertas` | Painel de alertas de vencimento (seção 12, ADR-06) |
+| `POST` | `/anos/{ano}/importacao/previa`, `/anos/{ano}/importacao/confirmar` | Tela de importação de extrato — CSV/XLSX/OFX (seção 13, ADR-08). Já implementado para os três formatos; o caminho antigo `/ofx/previa`/`/ofx/confirmar` foi renomeado e responde `404` |
+| `GET`/`POST`/`DELETE` | `/regras` | Sugestão automática de categoria na importação (seção 13) — já existe, não tinha entrado nesta tabela antes por não ser consumido por nenhuma tela até agora |
 
 Todos os endpoints das seções 1–11 já existiam e foram conferidos linha a
 linha contra o código real do backend — nenhum precisou ser criado para
-aquela rodada. Os quatro últimos da tabela acima (seção 12) são o único
-domínio novo deste pacote, decidido pelo ADR-06: nome, meta de poupança e
-alertas de vencimento. `budgets` (orçamento por categoria, dentro da tela
-`/metas`) continua fora de escopo, sem endpoint — ver seção 7 e o
+aquela rodada. Os da seção 12 são o domínio novo decidido pelo ADR-06:
+nome, meta de poupança e alertas de vencimento. Os da seção 13
+(importação) já existiam para OFX e foram generalizados para CSV/XLSX pelo
+ADR-08 — falta só a tela, que é nova no frontend. `budgets` (orçamento por categoria, dentro
+da tela `/metas`) continua fora de escopo, sem endpoint — ver seção 7 e o
 `ADR-0007` do repositório back.

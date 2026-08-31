@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import date
+
 import pytest
 
 # O fixture `cliente`, já autenticado, vem de conftest.py.
@@ -43,10 +45,11 @@ def comida(cliente):
     return cliente.post("/categorias", json={"nome": "Comida"}).json()
 
 
-def enviar(cliente, conteudo=EXTRATO):
+def enviar(cliente, conteudo=EXTRATO, formato="ofx"):
     return cliente.post(
-        "/anos/2026/importacao/ofx/previa",
-        files={"arquivo": ("extrato.ofx", conteudo, "application/x-ofx")},
+        "/anos/2026/importacao/previa",
+        files={"arquivo": (f"extrato.{formato}", conteudo, "application/octet-stream")},
+        data={"formato": formato},
     )
 
 
@@ -151,7 +154,7 @@ class TestConfirmacao:
         ]
 
         resposta = cliente.post(
-            "/anos/2026/importacao/ofx/confirmar", json={"transacoes": selecionadas}
+            "/anos/2026/importacao/confirmar", json={"transacoes": selecionadas}
         )
         assert resposta.status_code == 201
         assert resposta.json()["importadas"] == 2
@@ -164,7 +167,7 @@ class TestConfirmacao:
         def confirmar():
             previa = enviar(cliente).json()
             return cliente.post(
-                "/anos/2026/importacao/ofx/confirmar",
+                "/anos/2026/importacao/confirmar",
                 json={
                     "transacoes": [
                         {
@@ -189,7 +192,7 @@ class TestConfirmacao:
     def test_previa_marca_o_que_ja_foi_importado(self, cliente, ano, conta):
         previa = enviar(cliente).json()
         cliente.post(
-            "/anos/2026/importacao/ofx/confirmar",
+            "/anos/2026/importacao/confirmar",
             json={
                 "transacoes": [
                     {
@@ -212,7 +215,7 @@ class TestConfirmacao:
         ifood = next(t for t in previa["transacoes"] if "IFOOD" in t["descricao"])
 
         resultado = cliente.post(
-            "/anos/2026/importacao/ofx/confirmar",
+            "/anos/2026/importacao/confirmar",
             json={
                 "transacoes": [
                     {
@@ -234,7 +237,7 @@ class TestConfirmacao:
 
     def test_data_de_outro_ano_e_recusada(self, cliente, ano, conta):
         resposta = cliente.post(
-            "/anos/2026/importacao/ofx/confirmar",
+            "/anos/2026/importacao/confirmar",
             json={
                 "transacoes": [
                     {
@@ -251,7 +254,7 @@ class TestConfirmacao:
 
     def test_categoria_em_entrada_e_recusada(self, cliente, ano, comida, conta):
         resposta = cliente.post(
-            "/anos/2026/importacao/ofx/confirmar",
+            "/anos/2026/importacao/confirmar",
             json={
                 "transacoes": [
                     {
@@ -270,7 +273,7 @@ class TestConfirmacao:
     def test_importado_entra_nos_totais(self, cliente, ano, comida, conta):
         previa = enviar(cliente).json()
         cliente.post(
-            "/anos/2026/importacao/ofx/confirmar",
+            "/anos/2026/importacao/confirmar",
             json={
                 "transacoes": [
                     {
@@ -301,7 +304,7 @@ class TestConfirmacao:
         primeira = previa["transacoes"][0]
 
         cliente.post(
-            "/anos/2026/importacao/ofx/confirmar",
+            "/anos/2026/importacao/confirmar",
             json={
                 "transacoes": [
                     {
@@ -318,3 +321,131 @@ class TestConfirmacao:
         agosto = cliente.get("/anos/2026/resumo").json()["meses"][7]
         assert agosto["saidas"] == "0.00"
         assert agosto["guardado_no_mes"] == "113.85"
+
+
+# --------------------------------------------------------------------------- #
+# CSV e XLSX (ADR-08)
+#
+# O fluxo é o mesmo dos testes acima — o que muda é só o leitor. Estes testes
+# existem para garantir que continua sendo o mesmo fluxo: dedupe, alerta de
+# possível repetição e aprendizado de regra valem para os três formatos.
+# --------------------------------------------------------------------------- #
+EXTRATO_CSV = (
+    "data;valor;descricao\n"
+    "2026-08-05;-113,85;CLAUDE AI SUBSCRIPTION\n"
+    "2026-08-06;-47,00;IFOOD RESTAURANTE\n"
+    "2026-08-07;2000,00;SALARIO\n"
+).encode("utf-8")
+
+
+def extrato_xlsx() -> bytes:
+    import io
+
+    import openpyxl
+
+    livro = openpyxl.Workbook()
+    livro.active.append(["data", "valor", "descricao"])
+    livro.active.append([date(2026, 8, 5), -113.85, "CLAUDE AI SUBSCRIPTION"])
+    livro.active.append([date(2026, 8, 6), -47.00, "IFOOD RESTAURANTE"])
+    livro.active.append([date(2026, 8, 7), 2000.00, "SALARIO"])
+    buffer = io.BytesIO()
+    livro.save(buffer)
+    return buffer.getvalue()
+
+
+def confirmar_tudo(cliente, conta, conteudo, formato):
+    previa = enviar(cliente, conteudo, formato).json()
+    return cliente.post(
+        "/anos/2026/importacao/confirmar",
+        json={
+            "transacoes": [
+                {
+                    "fitid": t["fitid"],
+                    "conta_id": conta["id"],
+                    "data": t["data"],
+                    "valor": t["valor"],
+                    "tipo": t["tipo_sugerido"],
+                    "descricao": t["descricao"],
+                }
+                for t in previa["transacoes"]
+            ]
+        },
+    ).json()
+
+
+class TestOutrosFormatos:
+    @pytest.mark.parametrize("formato", ["csv", "xlsx"])
+    def test_le_e_classifica_pelo_sinal(self, cliente, ano, formato):
+        conteudo = EXTRATO_CSV if formato == "csv" else extrato_xlsx()
+        dados = enviar(cliente, conteudo, formato).json()
+
+        assert dados["total_lidas"] == 3
+        assert [t["tipo_sugerido"] for t in dados["transacoes"]] == [
+            "saida",
+            "saida",
+            "entrada",
+        ]
+
+    @pytest.mark.parametrize("formato", ["csv", "xlsx"])
+    def test_reimportar_o_mesmo_extrato_nao_duplica(self, cliente, ano, conta, formato):
+        conteudo = EXTRATO_CSV if formato == "csv" else extrato_xlsx()
+
+        assert confirmar_tudo(cliente, conta, conteudo, formato)["importadas"] == 3
+        segunda = confirmar_tudo(cliente, conta, conteudo, formato)
+        assert segunda["importadas"] == 0
+        assert segunda["ignoradas_duplicadas"] == 3
+        assert len(cliente.get("/anos/2026/lancamentos").json()) == 3
+
+    def test_o_mesmo_extrato_em_csv_e_xlsx_nao_duplica(self, cliente, ano, conta):
+        """Baixar o extrato nos dois formatos é engano fácil de cometer."""
+        assert confirmar_tudo(cliente, conta, EXTRATO_CSV, "csv")["importadas"] == 3
+        segunda = confirmar_tudo(cliente, conta, extrato_xlsx(), "xlsx")
+        assert segunda["importadas"] == 0
+        assert len(cliente.get("/anos/2026/lancamentos").json()) == 3
+
+    def test_mesma_data_e_valor_com_outra_descricao_e_so_possivel_repetido(
+        self, cliente, ano, conta
+    ):
+        """Duas compras iguais no mesmo dia existem — não podem sumir sozinhas."""
+        confirmar_tudo(cliente, conta, EXTRATO_CSV, "csv")
+
+        parecido = b"data;valor;descricao\n2026-08-06;-47,00;OUTRO RESTAURANTE\n"
+        linha = enviar(cliente, parecido, "csv").json()["transacoes"][0]
+
+        assert linha["duplicado"] is False
+        assert linha["possivel_repetido"] is True
+
+    def test_regra_de_categoria_vale_para_csv(self, cliente, ano, comida):
+        cliente.post("/regras", json={"padrao": "ifood", "categoria_id": comida["id"]})
+
+        previa = enviar(cliente, EXTRATO_CSV, "csv").json()
+        sugeridas = {
+            t["descricao"]: t["categoria_sugerida_nome"] for t in previa["transacoes"]
+        }
+        assert sugeridas["IFOOD RESTAURANTE"] == "Comida"
+        assert sugeridas["CLAUDE AI SUBSCRIPTION"] is None
+
+    def test_planilha_sem_as_colunas_esperadas_da_erro_legivel(self, cliente, ano):
+        resposta = enviar(cliente, b"quando;quanto;o que\n2026-08-05;-10;X\n", "csv")
+        assert resposta.status_code == 422
+        assert "colunas" in resposta.json()["detail"]
+
+    def test_formato_errado_para_o_arquivo_da_erro_legivel(self, cliente, ano):
+        """Escolher 'csv' no seletor e enviar o OFX é o engano mais provável."""
+        resposta = enviar(cliente, EXTRATO, "csv")
+        assert resposta.status_code == 422
+
+    def test_formato_desconhecido_e_recusado(self, cliente, ano):
+        resposta = cliente.post(
+            "/anos/2026/importacao/previa",
+            files={"arquivo": ("extrato.pdf", b"%PDF-1.4", "application/pdf")},
+            data={"formato": "pdf"},
+        )
+        assert resposta.status_code == 422
+
+    def test_formato_e_obrigatorio(self, cliente, ano):
+        resposta = cliente.post(
+            "/anos/2026/importacao/previa",
+            files={"arquivo": ("extrato.csv", EXTRATO_CSV, "text/csv")},
+        )
+        assert resposta.status_code == 422

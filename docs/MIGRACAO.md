@@ -3,10 +3,16 @@
 Duas origens: a planilha antiga (uma vez só, no começo) e o extrato do banco
 (sempre que quiser lançar o mês).
 
-## Extrato bancário (OFX)
+## Extrato bancário (OFX, CSV ou XLSX)
 
-Baixe o extrato em **OFX** pelo aplicativo do banco e use o botão *Importar
-extrato* no cabeçalho. O fluxo tem duas etapas e **nada é gravado na primeira**.
+Baixe o extrato pelo aplicativo do banco e use o botão *Importar extrato* no
+cabeçalho, escolhendo o formato do arquivo. O fluxo tem duas etapas e **nada é
+gravado na primeira**.
+
+Prefira **OFX** quando o banco oferecer: só nele existe o identificador de
+transação do próprio banco, que torna a deduplicação exata. CSV e XLSX
+funcionam igual em todo o resto — a diferença está explicada em
+*Deduplicação*, abaixo.
 
 ### Por que a revisão é obrigatória
 
@@ -37,9 +43,13 @@ Ele é gravado junto com o lançamento, então **reimportar o mesmo extrato não
 duplica nada**: as transações repetidas são reconhecidas e ignoradas. Extratos
 com períodos sobrepostos são seguros.
 
-Quando o banco não envia `FITID`, o sistema deriva um identificador estável de
-data + valor + descrição. Funciona, mas é menos confiável: duas compras
-idênticas no mesmo dia seriam vistas como a mesma.
+Quando o banco não envia `FITID` — e sempre, em CSV e XLSX, onde esse campo
+não existe —, o sistema deriva um identificador estável de data + valor +
+descrição. Funciona, mas é menos confiável: duas compras idênticas no mesmo
+dia, com a mesma descrição, seriam vistas como a mesma.
+
+Como a regra é a mesma nos três formatos, baixar o **mesmo** extrato em CSV e
+em XLSX e importar os dois não duplica nada.
 
 ### Regras de categorização
 
@@ -54,6 +64,32 @@ A sugestão nunca é aplicada sozinha: ela só preenche a tela de revisão.
 O leitor aceita OFX 1.x (SGML, o formato que os bancos brasileiros usam) e
 OFX 2.x (XML), em UTF-8 ou ISO-8859-1. Usa `MEMO` como descrição e cai para
 `NAME` quando o banco preenche só esse.
+
+### CSV e XLSX
+
+Não existe "CSV padrão de banco" — cada um exporta o que quer. Então o formato
+aceito aqui é o da própria aplicação: uma planilha com três colunas
+identificadas **pelo nome do cabeçalho**, em qualquer ordem (acentos e
+maiúsculas não importam):
+
+| Coluna | O que vai nela |
+| --- | --- |
+| `data` | `AAAA-MM-DD` ou `DD/MM/AAAA` |
+| `valor` | Com sinal: **negativo é saída**, positivo é entrada |
+| `descricao` | O texto que aparece no extrato |
+| `identificador` | **Opcional.** O código que o banco dá à transação |
+
+O **extrato em CSV do Nubank funciona direto**, sem precisar mexer em nada: as
+colunas dele já são essas, e ele traz o `Identificador`. Com essa coluna, a
+deduplicação fica tão exata quanto a do OFX — sem ela, duas compras iguais no
+mesmo dia com a mesma descrição são vistas como a mesma.
+
+Linhas antes do cabeçalho, linhas em branco, `R$`, separador de milhar e
+separador `;` ou `,` são tolerados. Linhas com valor zero são ignoradas.
+
+Se uma data ou um valor não puder ser lido, a importação **para e diz em qual
+linha** — numa planilha isso quase sempre significa que a coluna inteira está
+num formato diferente, e importar metade em silêncio seria pior.
 
 ---
 
