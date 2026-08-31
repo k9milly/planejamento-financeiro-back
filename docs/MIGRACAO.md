@@ -77,6 +77,12 @@ maiúsculas não importam):
 | `data` | `AAAA-MM-DD` ou `DD/MM/AAAA` |
 | `valor` | Com sinal: **negativo é saída**, positivo é entrada |
 | `descricao` | O texto que aparece no extrato |
+| `identificador` | **Opcional.** O código que o banco dá à transação |
+
+O **extrato em CSV do Nubank funciona direto**, sem precisar mexer em nada: as
+colunas dele já são essas, e ele traz o `Identificador`. Com essa coluna, a
+deduplicação fica tão exata quanto a do OFX — sem ela, duas compras iguais no
+mesmo dia com a mesma descrição são vistas como a mesma.
 
 Linhas antes do cabeçalho, linhas em branco, `R$`, separador de milhar e
 separador `;` ou `,` são tolerados. Linhas com valor zero são ignoradas.

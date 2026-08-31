@@ -950,6 +950,19 @@ layout genérico da própria aplicação, não o export nativo de nenhum
 banco — se o extrato real do banco da Kamilly tiver colunas diferentes,
 é um ajuste isolado só no parser, sem afetar o resto do contrato.
 
+**Confirmado contra um arquivo real (31/08/2026):** o extrato em CSV do
+Nubank passa neste layout sem nenhum ajuste — o cabeçalho dele é
+`Data,Valor,Identificador,Descrição`, e os três nomes obrigatórios casam
+(acento e maiúscula são ignorados).
+
+**Quarta coluna, opcional: `identificador`.** O Nubank traz um UUID por
+transação, que é o mesmo papel do `FITID` no OFX. Quando a coluna existe,
+o `fitid` da prévia é esse valor em vez do sintético — a deduplicação fica
+exata, e duas compras iguais no mesmo dia deixam de ser confundidas. Quando
+não existe (ou está vazia naquela linha), cai no sintético como antes. Nada
+muda para a tela: `fitid` continua sendo uma string opaca que ela devolve
+igual na confirmação.
+
 Além do mínimo acima, o parser já tolera o que um arquivo real costuma
 trazer, sem que isso mude o layout combinado: linhas de preâmbulo antes do
 cabeçalho, separador `;`, `,` ou tabulação, BOM do Excel, Latin-1, `R$` e

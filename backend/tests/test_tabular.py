@@ -226,3 +226,53 @@ class TestDelimitador:
         from app.services.tabular import _delimitador
 
         assert _delimitador("uma linha sem separador nenhum\noutra igual\n") == ","
+
+
+class TestIdentificadorDoBanco:
+    """A coluna opcional `identificador` — achada no CSV real do Nubank.
+
+    O desenho original supunha que planilha nunca traz identificador de
+    transação. O Nubank traz: um UUID por linha, que é o mesmo papel do
+    `FITID` no OFX. Quando existe, ganha do sintético.
+    """
+
+    NUBANK = (
+        "Data,Valor,Identificador,Descrição\n"
+        "08/08/2026,941.55,6a778f2e-ed39-4e83-8645-a431b3c236ec,Pix recebido\n"
+        "09/08/2026,-941.52,6a78f25d-7154-4f86-af56-75197e997056,Pagamento de fatura\n"
+    ).encode("utf-8")
+
+    def test_usa_o_identificador_do_banco_quando_existe(self):
+        primeira, segunda = ler_csv(self.NUBANK)
+        assert primeira.fitid == "6a778f2e-ed39-4e83-8645-a431b3c236ec"
+        assert segunda.fitid == "6a78f25d-7154-4f86-af56-75197e997056"
+
+    def test_o_resto_da_linha_continua_sendo_lido_igual(self):
+        primeira, segunda = ler_csv(self.NUBANK)
+        assert (primeira.data, primeira.valor, primeira.saida) == (
+            date(2026, 8, 8),
+            Decimal("941.55"),
+            False,
+        )
+        assert (segunda.valor, segunda.saida) == (Decimal("941.52"), True)
+
+    def test_sem_a_coluna_continua_sintetizando(self):
+        conteudo = b"data,valor,descricao\n08/08/2026,-10,MERCADO\n"
+        assert ler_csv(conteudo)[0].fitid == "2026-08-08|-10.00|MERCADO"
+
+    def test_celula_vazia_cai_no_sintetico(self):
+        """Coluna presente mas em branco naquela linha não pode virar fitid ''."""
+        conteudo = "Data,Valor,Identificador,Descrição\n08/08/2026,-10,,MERCADO\n".encode()
+        assert ler_csv(conteudo)[0].fitid == "2026-08-08|-10.00|MERCADO"
+
+    def test_duas_compras_iguais_no_mesmo_dia_deixam_de_colidir(self):
+        """É a vantagem real do identificador do banco sobre o sintético."""
+        sem_id = b"data,valor,descricao\n08/08/2026,-50,PADARIA\n08/08/2026,-50,PADARIA\n"
+        assert len({t.fitid for t in ler_csv(sem_id)}) == 1  # colidem
+
+        com_id = (
+            "Data,Valor,Identificador,Descrição\n"
+            "08/08/2026,-50,aaa-111,PADARIA\n"
+            "08/08/2026,-50,bbb-222,PADARIA\n"
+        ).encode()
+        assert len({t.fitid for t in ler_csv(com_id)}) == 2  # não colidem
