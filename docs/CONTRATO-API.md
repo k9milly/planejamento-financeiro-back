@@ -420,6 +420,9 @@ Se o ano corrente ainda não foi criado, devolve lista vazia.
 | `DELETE` | `/metas-poupanca/{id}` | **novo** | idem |
 | `GET` | `/alertas` | **novo** | `dia_vencimento` de gastos fixos e cartões |
 | `POST` | `/anos/{ano}/importacao/previa` | alterado — **rota renomeada** (era `.../importacao/ofx/previa`) e ganhou o campo `formato` | ADR-08 |
+| `GET`/`POST`/`PATCH`/`DELETE` | `/contas/{conta_id}/caixinhas` | **novo** | ADR-10 |
+| `POST` | `/contas/{conta_id}/caixinhas/transferir` | **novo** | idem |
+| `POST`/`PATCH` | `/anos/{ano}/lancamentos` | alterado — `caixinha_id`, `caixinha_destino_id`, tipo `transferencia_caixinha` | idem |
 
 ---
 
@@ -459,6 +462,48 @@ XLSX não é importado duas vezes.
 Contrato completo (schemas TypeScript, comportamento esperado da tela para
 `duplicado`/`possivel_repetido`/`fora_do_ano`) na seção 13 de
 `docs/specs/especificacao-tecnica-funcional.md`.
+
+---
+
+## Caixinhas por conta (ADR-10)
+
+Entidade nova. Uma caixinha **nomeia parte do que a conta já tem guardado** —
+nunca acrescenta dinheiro.
+
+```
+GET    /contas/{conta_id}/caixinhas          ?incluir_inativas=false
+POST   /contas/{conta_id}/caixinhas          → 201 CaixinhaOut
+PATCH  /contas/{conta_id}/caixinhas/{id}     nome, meta_id
+DELETE /contas/{conta_id}/caixinhas/{id}     → 204, soft-delete
+POST   /contas/{conta_id}/caixinhas/transferir → 201 CaixinhaOut (a de destino)
+```
+
+`CaixinhaOut.saldo` é **calculado**, não é coluna: `saldo_inicial` mais o
+efeito dos lançamentos que apontam para a caixinha. Vem pronto na resposta.
+
+`saldo_inicial` existe para dar nome, retroativamente, a dinheiro já lançado
+sem caixinha. Teto: o guardado da conta menos a soma das caixinhas ativas —
+acima disso, `422` com os dois números na mensagem. Só em conta corrente:
+cartão não tem reserva (ADR-0002).
+
+`Lancamento` ganha `caixinha_id` e `caixinha_destino_id`. `caixinha_id` é
+aceito em `guardado`, `retirado`, `transferencia_caixinha`, e em
+`rendimento`/`perda` com `destino="guardado"`; a caixinha precisa ser da mesma
+conta do lançamento e estar ativa.
+
+**Nesses mesmos tipos, `caixinha_id` passa a ser obrigatório quando a conta
+tem alguma caixinha ativa** — todo dinheiro guardado precisa estar numa
+caixinha. Conta sem caixinha nenhuma continua aceitando o campo ausente, como
+antes. A mesma regra vale em `TransacaoConfirmar`, na importação, que por isso
+também aceita `caixinha_id`. Nenhuma caixinha pode terminar com saldo
+negativo, em nenhum caminho — inclusive ao excluir um lançamento antigo. `TipoLancamento` ganha `transferencia_caixinha`, que **não conta
+como entrada nem saída** e não muda o guardado da conta.
+
+`GET /metas-poupanca/ativas` **não muda de schema** — só troca a origem do
+progresso quando alguma caixinha ativa aponta para a meta.
+
+Contrato completo (schemas TypeScript, erros, o que a tela calcula sozinha) na
+seção 15 de `docs/specs/especificacao-tecnica-funcional.md`.
 
 ---
 

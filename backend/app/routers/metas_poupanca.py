@@ -13,8 +13,9 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models import Ano, Lancamento, MetaPoupanca, TipoMetaPoupanca
+from app.models import Ano, Caixinha, Lancamento, MetaPoupanca, TipoMetaPoupanca
 from app.routers.anos import totais_do_ano
+from app.services.caixinhas import saldos
 from app.services.calculos import variacao_do_guardado
 from app.schemas import (
     MetaPoupancaCriar,
@@ -91,7 +92,7 @@ def ativas(db: Session = Depends(get_db)) -> MetasAtivasOut:
     meses = totais_do_ano(ano_ref, db) if ano_ref else None
 
     return MetasAtivasOut(
-        mensal=_progresso_mensal(_ativa(TipoMetaPoupanca.MENSAL, db), meses, hoje),
+        mensal=_progresso_mensal(_ativa(TipoMetaPoupanca.MENSAL, db), meses, hoje, db),
         prazo=_progresso_prazo(_ativa(TipoMetaPoupanca.PRAZO, db), hoje, db),
     )
 
@@ -123,6 +124,21 @@ def _ativa(tipo: TipoMetaPoupanca, db: Session) -> MetaPoupanca | None:
     )
 
 
+def _caixinhas_da_meta(meta: MetaPoupanca, db: Session) -> list[Caixinha]:
+    """As caixinhas ativas que apontam para esta meta (ADR-10).
+
+    Lista vazia significa "ninguém vinculou caixinha a esta meta" — e aí o
+    progresso continua vindo do guardado da conta inteira, como o ADR-06
+    define. Só as ativas: desativar uma caixinha devolve o dinheiro dela ao
+    guardado sem rótulo, então ele não deve continuar contando para a meta.
+    """
+    return (
+        db.query(Caixinha)
+        .filter(Caixinha.meta_id == meta.id, Caixinha.ativa.is_(True))
+        .all()
+    )
+
+
 def _percentual(guardado: Decimal, alvo: Decimal) -> float:
     """Sem teto em 100: bater 130% do alvo é informação, não erro.
 
@@ -135,11 +151,32 @@ def _percentual(guardado: Decimal, alvo: Decimal) -> float:
 
 
 def _progresso_mensal(
-    meta: MetaPoupanca | None, meses, hoje: date
+    meta: MetaPoupanca | None, meses, hoje: date, db: Session
 ) -> ProgressoMetaMensalOut | None:
+    """Com caixinha vinculada, mede só o que entrou nela **neste mês**.
+
+    O saldo da caixinha não serve aqui: uma meta mensal pergunta quanto entrou
+    no mês, não quanto já há acumulado. Uma caixinha com R$ 5.000 de meses
+    anteriores marcaria a meta de janeiro como cumprida sem que nada tivesse
+    sido guardado em janeiro.
+    """
     if meta is None:
         return None
-    guardado = meses[hoje.month - 1].guardado_no_mes if meses else ZERO
+
+    vinculadas = _caixinhas_da_meta(meta, db)
+    if vinculadas:
+        guardado = variacao_do_guardado(
+            db.query(Lancamento)
+            .filter(
+                Lancamento.caixinha_id.in_({c.id for c in vinculadas}),
+                Lancamento.data >= date(hoje.year, hoje.month, 1),
+                Lancamento.data <= hoje,
+            )
+            .all()
+        )
+    else:
+        guardado = meses[hoje.month - 1].guardado_no_mes if meses else ZERO
+
     return ProgressoMetaMensalOut(
         id=meta.id,
         valor_alvo=meta.valor_alvo,
@@ -165,13 +202,20 @@ def _progresso_prazo(
     if meta is None:
         return None
 
-    desde = meta.criada_em.date()
-    lancamentos = (
-        db.query(Lancamento)
-        .filter(Lancamento.data >= desde, Lancamento.data <= hoje)
-        .all()
-    )
-    guardado = variacao_do_guardado(lancamentos)
+    vinculadas = _caixinhas_da_meta(meta, db)
+    if vinculadas:
+        # Com caixinha vinculada o saldo dela **é** o acumulado da meta, então
+        # não há por que recontar lançamento por lançamento — nem por que
+        # recortar por data: quem separou aquele dinheiro numa caixinha já
+        # disse que ele é para esta meta, inclusive o que veio de antes.
+        guardado = sum(saldos(vinculadas, db).values(), ZERO)
+    else:
+        lancamentos = (
+            db.query(Lancamento)
+            .filter(Lancamento.data >= meta.criada_em.date(), Lancamento.data <= hoje)
+            .all()
+        )
+        guardado = variacao_do_guardado(lancamentos)
 
     return ProgressoMetaPrazoOut(
         id=meta.id,

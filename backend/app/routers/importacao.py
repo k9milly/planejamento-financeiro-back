@@ -24,6 +24,7 @@ from app.database import get_db
 from app.deps import obter_ano_editavel
 from app.models import (
     Ano,
+    Caixinha,
     Categoria,
     Conta,
     Lancamento,
@@ -37,6 +38,10 @@ from app.schemas import (
     TransacaoPrevia,
     validar_coerencia,
     validar_conta_compativel,
+)
+from app.services.caixinhas import (
+    exigir_caixinha,
+    garantir_nao_negativas,
 )
 from app.services.extrato import ErroExtrato, TransacaoExtrato
 from app.services.ofx import ler_ofx
@@ -190,6 +195,7 @@ def confirmar(
     importadas = 0
     ignoradas = 0
     regras_criadas = 0
+    caixinhas_tocadas: set[int] = set()
 
     for item in dados.transacoes:
         if item.fitid in fitids:
@@ -207,6 +213,9 @@ def confirmar(
 
         _validar_coerencia(item)
         _validar_conta_compativel(item, db)
+        _validar_caixinha(item, db)
+        if item.caixinha_id is not None:
+            caixinhas_tocadas.add(item.caixinha_id)
 
         db.add(
             Lancamento(
@@ -222,6 +231,7 @@ def confirmar(
                 forma_pagamento=item.forma_pagamento,
                 descricao=item.descricao,
                 fitid=item.fitid,
+                caixinha_id=item.caixinha_id,
             )
         )
         fitids.add(item.fitid)
@@ -231,6 +241,9 @@ def confirmar(
             if _criar_regra(db, item.aprender_padrao, item.categoria_id):
                 regras_criadas += 1
 
+    db.flush()
+    garantir_nao_negativas(caixinhas_tocadas, db, _erro)
+
     db.commit()
     return ResultadoImportacao(
         importadas=importadas,
@@ -239,14 +252,37 @@ def confirmar(
     )
 
 
+def _erro(mensagem: str) -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=mensagem
+    )
+
+
+def _validar_caixinha(item, db: Session) -> None:
+    """As mesmas duas regras de caixinha do cadastro manual (ADR-10).
+
+    A importação é uma porta para dentro como qualquer outra: se ela aceitasse
+    um `guardado` sem caixinha numa conta organizada, a soma das caixinhas
+    deixaria de bater com o guardado da conta pelo caminho de trás.
+    """
+    if item.caixinha_id is not None:
+        caixinha = db.get(Caixinha, item.caixinha_id)
+        if caixinha is None:
+            raise _erro(f"Caixinha {item.caixinha_id} não existe.")
+        if caixinha.conta_id != item.conta_id:
+            raise _erro(f"A caixinha '{caixinha.nome}' é de outra conta.")
+        if not caixinha.ativa:
+            raise _erro(f"A caixinha '{caixinha.nome}' está desativada.")
+
+    exigir_caixinha(
+        item.conta_id, item.tipo, item.destino, item.caixinha_id, db, _erro
+    )
+
+
 def _validar_coerencia(item) -> None:
     """Mesmas regras do cadastro manual — a importação não é uma porta dos fundos."""
 
-    def erro(mensagem: str) -> HTTPException:
-        return HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=mensagem
-        )
-
+    erro = _erro
     validar_coerencia(
         item.tipo,
         item.destino,
@@ -255,15 +291,12 @@ def _validar_coerencia(item) -> None:
         item.conta_destino_id,
         item.forma_pagamento,
         erro,
+        caixinha_id=item.caixinha_id,
     )
 
 
 def _validar_conta_compativel(item, db: Session) -> None:
-    def erro(mensagem: str) -> HTTPException:
-        return HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=mensagem
-        )
-
+    erro = _erro
     conta = db.get(Conta, item.conta_id)
     if conta is None:
         raise erro(f"Conta {item.conta_id} não existe.")
