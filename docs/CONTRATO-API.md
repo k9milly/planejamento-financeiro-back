@@ -486,11 +486,17 @@ sem caixinha. Teto: o guardado da conta menos a soma das caixinhas ativas —
 acima disso, `422` com os dois números na mensagem. Só em conta corrente:
 cartão não tem reserva (ADR-0002).
 
-`Lancamento` ganha `caixinha_id` e `caixinha_destino_id`, ambos opcionais e
-sem quebrar nada que já exista. `caixinha_id` é aceito em `guardado`,
-`retirado`, `transferencia_caixinha`, e em `rendimento`/`perda` com
-`destino="guardado"`; a caixinha precisa ser da mesma conta do lançamento e
-estar ativa. `TipoLancamento` ganha `transferencia_caixinha`, que **não conta
+`Lancamento` ganha `caixinha_id` e `caixinha_destino_id`. `caixinha_id` é
+aceito em `guardado`, `retirado`, `transferencia_caixinha`, e em
+`rendimento`/`perda` com `destino="guardado"`; a caixinha precisa ser da mesma
+conta do lançamento e estar ativa.
+
+**Nesses mesmos tipos, `caixinha_id` passa a ser obrigatório quando a conta
+tem alguma caixinha ativa** — todo dinheiro guardado precisa estar numa
+caixinha. Conta sem caixinha nenhuma continua aceitando o campo ausente, como
+antes. A mesma regra vale em `TransacaoConfirmar`, na importação, que por isso
+também aceita `caixinha_id`. Nenhuma caixinha pode terminar com saldo
+negativo, em nenhum caminho — inclusive ao excluir um lançamento antigo. `TipoLancamento` ganha `transferencia_caixinha`, que **não conta
 como entrada nem saída** e não muda o guardado da conta.
 
 `GET /metas-poupanca/ativas` **não muda de schema** — só troca a origem do

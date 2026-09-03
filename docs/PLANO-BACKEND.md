@@ -394,12 +394,26 @@ só a de destino.
 
 Lançamentos sem caixinha não mudaram de comportamento.
 
-**Ainda em aberto, e não é o mesmo problema:** a soma das caixinhas pode passar
-do guardado da conta se um `retirado` **sem caixinha** levar embora dinheiro
-que estava rotulado. Nenhuma caixinha fica negativa — o total da conta é que
-fica menor que a soma delas. Fechar isso significaria recusar retiradas que não
-nomeiam caixinha, ou exigir a caixinha quando a conta tiver alguma; é decisão
-de produto, não de implementação.
+**Numa conta com caixinhas, todo dinheiro guardado está em uma delas.** A
+Kamilly corrigiu a premissa: não existe "dinheiro solto" na reserva — ele está
+numa caixinha ou num investimento. Então a exigência não é condicional a
+sobrar ou não dinheiro sem rótulo; vale a partir da **primeira caixinha ativa**
+da conta.
+
+Sem ela, o total da conta e a soma das caixinhas desencontram sem que nenhuma
+caixinha fique negativa. Com R$ 1.000 divididos em duas caixinhas, retirar
+R$ 300 sem escolher deixava a conta com R$ 700 guardados e as caixinhas
+somando R$ 1.000.
+
+Aplicada nos tipos que mexem na reserva (`guardado`, `retirado`, e
+`rendimento`/`perda` com `destino="guardado"`), nas **duas** portas que criam
+lançamento: o cadastro/edição e a confirmação da importação — que por isso
+ganhou `caixinha_id` em `TransacaoConfirmar`. `entrada`, `saida` e
+transferência entre contas não são afetadas.
+
+Uma conta sem caixinha nenhuma continua exatamente como antes: não há o que
+escolher. É isso que permite lançar o guardado primeiro e organizar em
+caixinhas depois, com `saldo_inicial` — o caminho da migração da Kamilly.
 
 ## Fora desta rodada (decisões já registradas nas Partes 1 e 2, não tarefas)
 

@@ -11,6 +11,7 @@ medido — o mesmo recorte que `GET /metas-poupanca/ativas` já usava.
 from __future__ import annotations
 
 from datetime import date
+from decimal import Decimal
 
 import pytest
 
@@ -639,3 +640,196 @@ class TestNuncaFicaNegativa:
         """A trava é sobre caixinha; quem não usa caixinha não muda de comportamento."""
         assert guardar(cliente, conta, "100.00").status_code == 201
         assert guardar(cliente, conta, "900.00", tipo="retirado").status_code == 201
+
+
+class TestTodoGuardadoTemCaixinha:
+    """Não existe "dinheiro solto" na reserva de uma conta organizada.
+
+    Foi a regra que a Kamilly descreveu: todo dinheiro guardado está numa
+    caixinha ou num investimento. Sem ela, o total da conta e a soma das
+    caixinhas desencontram — e nenhuma caixinha precisa ficar negativa para
+    isso acontecer.
+    """
+
+    def _guardado_da_conta(self, cliente, conta):
+        resumo = cliente.get(f"/anos/{ANO}/resumo").json()
+        return next(
+            c["guardado"] for c in resumo["por_conta"] if c["conta_id"] == conta["id"]
+        )
+
+    def _soma_das_caixinhas(self, cliente, conta):
+        caixinhas = cliente.get(f"/contas/{conta['id']}/caixinhas").json()
+        return sum(Decimal(c["saldo"]) for c in caixinhas)
+
+    def test_o_desencontro_que_a_regra_evita(self, cliente, ano, conta):
+        """O cenário concreto: R$ 1.000 divididos, retirada de R$ 300 sem escolher."""
+        guardar(cliente, conta, "1000.00")
+        criar_caixinha(cliente, conta, "Reserva", saldo_inicial="600.00")
+        criar_caixinha(cliente, conta, "Fatura", saldo_inicial="400.00")
+
+        recusada = guardar(cliente, conta, "300.00", tipo="retirado")
+        assert recusada.status_code == 422
+        assert "caixinhas" in recusada.json()["detail"]
+        # A mensagem lista as opções, para a tela poder mostrar o que escolher.
+        assert "Reserva" in recusada.json()["detail"]
+        assert "Fatura" in recusada.json()["detail"]
+
+        # E as contas continuam fechando.
+        guardado = Decimal(self._guardado_da_conta(cliente, conta))
+        assert guardado == self._soma_das_caixinhas(cliente, conta)
+
+    def test_com_a_caixinha_escolhida_a_retirada_passa(self, cliente, ano, conta):
+        guardar(cliente, conta, "1000.00")
+        reserva = criar_caixinha(
+            cliente, conta, "Reserva", saldo_inicial="600.00"
+        ).json()
+        criar_caixinha(cliente, conta, "Fatura", saldo_inicial="400.00")
+
+        passou = guardar(cliente, conta, "300.00", reserva["id"], tipo="retirado")
+        assert passou.status_code == 201
+
+        guardado = Decimal(self._guardado_da_conta(cliente, conta))
+        assert guardado == self._soma_das_caixinhas(cliente, conta)
+
+    def test_guardar_solto_tambem_e_recusado(self, cliente, ano, conta):
+        """Entrar sem rótulo criaria dinheiro solto novo, que é o que não pode."""
+        criar_caixinha(cliente, conta, "Reserva")
+        assert guardar(cliente, conta, "100.00").status_code == 422
+
+    def test_rendimento_no_guardado_tambem_exige(self, cliente, ano, conta):
+        criar_caixinha(cliente, conta, "Reserva")
+        resposta = cliente.post(
+            f"/anos/{ANO}/lancamentos",
+            json={
+                "data": HOJE.isoformat(),
+                "valor": "10.00",
+                "tipo": "rendimento",
+                "destino": "guardado",
+                "conta_id": conta["id"],
+            },
+        )
+        assert resposta.status_code == 422
+
+    def test_rendimento_na_conta_nao_exige(self, cliente, ano, conta):
+        """Só o que mexe na reserva precisa de caixinha."""
+        criar_caixinha(cliente, conta, "Reserva")
+        resposta = cliente.post(
+            f"/anos/{ANO}/lancamentos",
+            json={
+                "data": HOJE.isoformat(),
+                "valor": "10.00",
+                "tipo": "rendimento",
+                "destino": "conta",
+                "conta_id": conta["id"],
+            },
+        )
+        assert resposta.status_code == 201
+
+    def test_entrada_e_saida_nao_sao_afetadas(self, cliente, ano, conta):
+        criar_caixinha(cliente, conta, "Reserva")
+        assert guardar(cliente, conta, "50.00", tipo="entrada").status_code == 201
+        assert guardar(cliente, conta, "20.00", tipo="saida").status_code == 201
+
+    def test_conta_sem_caixinha_continua_como_sempre(self, cliente, ano, conta, conta2):
+        """A regra nasce com a primeira caixinha — e é por conta."""
+        criar_caixinha(cliente, conta, "Reserva")
+
+        # A outra conta não foi organizada, então continua aceitando solto.
+        assert guardar(cliente, conta2, "100.00").status_code == 201
+
+    def test_o_dinheiro_de_antes_nao_e_invalidado(self, cliente, ano, conta):
+        """A migração da Kamilly: guardado solto lançado antes das caixinhas.
+
+        Ele continua existindo e é justamente o que `saldo_inicial` rotula.
+        A regra vale para lançamentos novos, não retroativamente.
+        """
+        guardar(cliente, conta, "1000.00")
+        caixinha = criar_caixinha(
+            cliente, conta, "Reserva", saldo_inicial="1000.00"
+        ).json()
+        assert caixinha["saldo"] == "1000.00"
+
+    def test_desativar_a_ultima_caixinha_libera_de_novo(self, cliente, ano, conta):
+        """Sem caixinha ativa não há o que escolher, então a exigência some."""
+        caixinha = criar_caixinha(cliente, conta, "Reserva").json()
+        assert guardar(cliente, conta, "100.00").status_code == 422
+
+        cliente.delete(f"/contas/{conta['id']}/caixinhas/{caixinha['id']}")
+        assert guardar(cliente, conta, "100.00").status_code == 201
+
+    def test_editar_um_lancamento_para_solto_e_recusado(self, cliente, ano, conta):
+        caixinha = criar_caixinha(cliente, conta, "Reserva").json()
+        lanc = guardar(cliente, conta, "100.00", caixinha["id"]).json()
+
+        resposta = cliente.patch(
+            f"/anos/{ANO}/lancamentos/{lanc['id']}", json={"caixinha_id": None}
+        )
+        assert resposta.status_code == 422
+
+    def test_a_importacao_respeita_a_mesma_regra(self, cliente, ano, conta):
+        """A importação é uma porta para dentro como qualquer outra."""
+        criar_caixinha(cliente, conta, "Reserva")
+
+        resposta = cliente.post(
+            f"/anos/{ANO}/importacao/confirmar",
+            json={
+                "transacoes": [
+                    {
+                        "fitid": "x-1",
+                        "conta_id": conta["id"],
+                        "data": HOJE.isoformat(),
+                        "valor": "100.00",
+                        "tipo": "guardado",
+                        "descricao": "APLICACAO",
+                    }
+                ]
+            },
+        )
+        assert resposta.status_code == 422
+        assert "caixinhas" in resposta.json()["detail"]
+
+    def test_a_importacao_aceita_com_a_caixinha(self, cliente, ano, conta):
+        caixinha = criar_caixinha(cliente, conta, "Reserva").json()
+
+        resposta = cliente.post(
+            f"/anos/{ANO}/importacao/confirmar",
+            json={
+                "transacoes": [
+                    {
+                        "fitid": "x-1",
+                        "conta_id": conta["id"],
+                        "data": HOJE.isoformat(),
+                        "valor": "100.00",
+                        "tipo": "guardado",
+                        "caixinha_id": caixinha["id"],
+                        "descricao": "APLICACAO",
+                    }
+                ]
+            },
+        )
+        assert resposta.status_code == 201
+
+        atual = cliente.get(f"/contas/{conta['id']}/caixinhas").json()[0]
+        assert atual["saldo"] == "100.00"
+
+    def test_a_importacao_nao_deixa_caixinha_negativa(self, cliente, ano, conta):
+        caixinha = criar_caixinha(cliente, conta, "Reserva").json()
+
+        resposta = cliente.post(
+            f"/anos/{ANO}/importacao/confirmar",
+            json={
+                "transacoes": [
+                    {
+                        "fitid": "x-1",
+                        "conta_id": conta["id"],
+                        "data": HOJE.isoformat(),
+                        "valor": "500.00",
+                        "tipo": "retirado",
+                        "caixinha_id": caixinha["id"],
+                        "descricao": "RESGATE",
+                    }
+                ]
+            },
+        )
+        assert resposta.status_code == 422
+        assert "negativa" in resposta.json()["detail"]
