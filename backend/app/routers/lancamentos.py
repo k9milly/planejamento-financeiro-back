@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session, joinedload
 from app.database import get_db
 from app.models import Ano, Caixinha, Categoria, Conta, Lancamento, TipoLancamento
 from app.deps import obter_ano, obter_ano_editavel
+from app.services.caixinhas import garantir_nao_negativas
 from app.schemas import (
     LancamentoAtualizar,
     LancamentoCriar,
@@ -74,6 +75,9 @@ def criar(
         **dados.model_dump(),
     )
     db.add(lanc)
+    _garantir_caixinhas_positivas(
+        db, {dados.caixinha_id, dados.caixinha_destino_id}
+    )
     db.commit()
     db.refresh(lanc)
     return lanc
@@ -90,6 +94,9 @@ def atualizar(
 ) -> Lancamento:
     lanc = _obter(lancamento_id, ano_ref, db)
     alteracoes = dados.model_dump(exclude_unset=True)
+    # As de antes entram na conferência junto com as novas: tirar um `guardado`
+    # de uma caixinha a esvazia tanto quanto retirar dela.
+    afetadas = {lanc.caixinha_id, lanc.caixinha_destino_id}
 
     for campo, valor in alteracoes.items():
         setattr(lanc, campo, valor)
@@ -110,6 +117,9 @@ def atualizar(
     _validar_caixinha(lanc.caixinha_id, lanc.conta_id, db)
     _validar_caixinha(lanc.caixinha_destino_id, lanc.conta_id, db)
 
+    _garantir_caixinhas_positivas(
+        db, afetadas | {lanc.caixinha_id, lanc.caixinha_destino_id}
+    )
     db.commit()
     db.refresh(lanc)
     return lanc
@@ -125,7 +135,17 @@ def excluir(
     ano_ref: Ano = Depends(obter_ano_editavel),
     db: Session = Depends(get_db),
 ) -> None:
-    db.delete(_obter(lancamento_id, ano_ref, db))
+    """Apagar também precisa ser conferido.
+
+    Apagar o `guardado` que financiou uma retirada posterior deixa a caixinha
+    negativa sem que ninguém tenha retirado nada a mais — o saldo é derivado,
+    então some o depósito e sobra só a saída.
+    """
+    lanc = _obter(lancamento_id, ano_ref, db)
+    afetadas = {lanc.caixinha_id, lanc.caixinha_destino_id}
+
+    db.delete(lanc)
+    _garantir_caixinhas_positivas(db, afetadas)
     db.commit()
 
 
@@ -188,6 +208,22 @@ def _validar_conta_compativel(
         )
 
     validar_conta_compativel(tipo, forma_pagamento, conta.tipo, erro)
+
+
+def _garantir_caixinhas_positivas(db: Session, ids: set[int | None]) -> None:
+    """Confere o resultado da operação, não a operação em si.
+
+    Roda com a mudança já na sessão (`flush`) e antes do `commit`: se recusar,
+    nada é gravado — o `close` da dependência desfaz a transação.
+    """
+    db.flush()
+
+    def erro(mensagem: str) -> HTTPException:
+        return HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=mensagem
+        )
+
+    garantir_nao_negativas({i for i in ids if i is not None}, db, erro)
 
 
 def _validar_caixinha(caixinha_id: int | None, conta_id: int, db: Session) -> None:
