@@ -15,6 +15,18 @@ o "guardado sem caixinha": o dinheiro que existia antes deste ADR, ou que
 ainda não foi organizado. É contra ele que `saldo_inicial` é validado na
 criação — senão uma caixinha nova inventaria dinheiro que a conta não tem.
 
+**Numa conta com caixinhas, todo dinheiro guardado está em uma delas.** Foi a
+regra que a Kamilly descreveu: não existe "dinheiro solto" na reserva — ele
+está numa caixinha ou num investimento. Então, assim que a conta ganha a
+primeira caixinha, guardar ou retirar sem dizer qual passa a ser recusado
+(`exigir_caixinha`). Sem isso, o total da conta e a soma das caixinhas
+desencontram: retirar R$ 300 sem escolher deixa a conta com R$ 700 guardados e
+as caixinhas somando R$ 1.000.
+
+O `guardado sem caixinha` continua existindo como estado **de passagem** —
+dinheiro lançado antes de as caixinhas existirem, que é justamente o que
+`saldo_inicial` serve para rotular. Ele nunca cresce depois disso.
+
 **Nenhuma caixinha pode ficar com saldo negativo.** Como o saldo é derivado,
 não basta checar a operação que a pessoa está fazendo: retirar mais do que a
 caixinha tem, apagar o depósito que financiou uma retirada antiga, ou editar o
@@ -30,7 +42,8 @@ from decimal import Decimal
 
 from sqlalchemy.orm import Session
 
-from app.models import Ano, Caixinha, Lancamento, TipoLancamento
+from app.models import Ano, Caixinha, DestinoRendimento, Lancamento, TipoLancamento
+from app.schemas import mexe_na_reserva
 from app.services.calculos import variacao_do_guardado
 
 ZERO = Decimal("0.00")
@@ -113,6 +126,35 @@ def guardado_da_conta(conta_id: int, db: Session) -> Decimal:
     fechamento = totais_do_ano(ano_ref, db)[-1]
     carteiras = fechamento.por_conta.get(conta_id)
     return carteiras.guardado if carteiras else ZERO
+
+
+def exigir_caixinha(
+    conta_id: int,
+    tipo: TipoLancamento,
+    destino: DestinoRendimento | None,
+    caixinha_id: int | None,
+    db: Session,
+    erro,
+) -> None:
+    """Numa conta com caixinhas, mexer na reserva exige dizer em qual.
+
+    Só vale a partir da primeira caixinha ativa da conta: uma conta que ainda
+    não foi organizada continua aceitando guardado e retirado soltos, como
+    sempre aceitou. Isso é o que permite criar as caixinhas depois, com
+    `saldo_inicial`, sem ter de reescrever o histórico.
+    """
+    if caixinha_id is not None or not mexe_na_reserva(tipo, destino):
+        return
+
+    ativas = ativas_da_conta(conta_id, db)
+    if not ativas:
+        return
+
+    nomes = ", ".join(f"'{c.nome}'" for c in ativas)
+    raise erro(
+        "Esta conta tem caixinhas, e todo dinheiro guardado precisa estar em "
+        f"uma delas. Escolha a caixinha deste lançamento: {nomes}."
+    )
 
 
 def garantir_nao_negativas(ids: set[int], db: Session, erro) -> None:

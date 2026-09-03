@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session, joinedload
 from app.database import get_db
 from app.models import Ano, Caixinha, Categoria, Conta, Lancamento, TipoLancamento
 from app.deps import obter_ano, obter_ano_editavel
-from app.services.caixinhas import garantir_nao_negativas
+from app.services.caixinhas import exigir_caixinha, garantir_nao_negativas
 from app.schemas import (
     LancamentoAtualizar,
     LancamentoCriar,
@@ -67,6 +67,7 @@ def criar(
     _validar_conta_compativel(dados.tipo, dados.forma_pagamento, conta)
     _validar_caixinha(dados.caixinha_id, dados.conta_id, db)
     _validar_caixinha(dados.caixinha_destino_id, dados.conta_id, db)
+    _exigir_caixinha(dados.conta_id, dados.tipo, dados.destino, dados.caixinha_id, db)
 
     lanc = Lancamento(
         ano_id=ano_ref.id,
@@ -116,6 +117,7 @@ def atualizar(
     # deixaria a caixinha antiga apontando para outra conta.
     _validar_caixinha(lanc.caixinha_id, lanc.conta_id, db)
     _validar_caixinha(lanc.caixinha_destino_id, lanc.conta_id, db)
+    _exigir_caixinha(lanc.conta_id, lanc.tipo, lanc.destino, lanc.caixinha_id, db)
 
     _garantir_caixinhas_positivas(
         db, afetadas | {lanc.caixinha_id, lanc.caixinha_destino_id}
@@ -210,6 +212,17 @@ def _validar_conta_compativel(
     validar_conta_compativel(tipo, forma_pagamento, conta.tipo, erro)
 
 
+def _erro_422(mensagem: str) -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=mensagem
+    )
+
+
+def _exigir_caixinha(conta_id, tipo, destino, caixinha_id, db: Session) -> None:
+    """Conta com caixinhas não aceita guardado nem retirado solto (ADR-10)."""
+    exigir_caixinha(conta_id, tipo, destino, caixinha_id, db, _erro_422)
+
+
 def _garantir_caixinhas_positivas(db: Session, ids: set[int | None]) -> None:
     """Confere o resultado da operação, não a operação em si.
 
@@ -217,13 +230,7 @@ def _garantir_caixinhas_positivas(db: Session, ids: set[int | None]) -> None:
     nada é gravado — o `close` da dependência desfaz a transação.
     """
     db.flush()
-
-    def erro(mensagem: str) -> HTTPException:
-        return HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=mensagem
-        )
-
-    garantir_nao_negativas({i for i in ids if i is not None}, db, erro)
+    garantir_nao_negativas({i for i in ids if i is not None}, db, _erro_422)
 
 
 def _validar_caixinha(caixinha_id: int | None, conta_id: int, db: Session) -> None:

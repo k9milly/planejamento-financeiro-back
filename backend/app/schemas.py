@@ -251,6 +251,21 @@ TIPOS_COM_CAIXINHA = {
 }
 
 
+def mexe_na_reserva(
+    tipo: TipoLancamento, destino: DestinoRendimento | None
+) -> bool:
+    """Se este lançamento tira ou põe dinheiro no `guardado` da conta.
+
+    É a pergunta que decide se uma caixinha faz sentido — e, quando a conta
+    tem caixinhas, se ela é obrigatória (ADR-10). Fica aqui, junto das outras
+    regras de coerência, para os três caminhos que criam lançamento
+    (cadastro, edição e importação) fazerem a mesma pergunta.
+    """
+    return tipo in TIPOS_COM_CAIXINHA or (
+        tipo in TIPOS_COM_DESTINO and destino is DestinoRendimento.GUARDADO
+    )
+
+
 def _validar_caixinhas(
     tipo: TipoLancamento,
     destino: DestinoRendimento | None,
@@ -281,10 +296,7 @@ def _validar_caixinhas(
     if caixinha_id is None:
         return
 
-    atinge_o_guardado = tipo in TIPOS_COM_CAIXINHA or (
-        tipo in TIPOS_COM_DESTINO and destino is DestinoRendimento.GUARDADO
-    )
-    if not atinge_o_guardado:
+    if not mexe_na_reserva(tipo, destino):
         raise erro(
             "'caixinha_id' só se aplica a lançamentos que mexem na reserva: "
             "guardado, retirado, ou rendimento/perda com destino 'guardado'."
@@ -410,6 +422,10 @@ class TransacaoConfirmar(BaseModel):
     # O extrato bancário não informa a forma de pagamento — nula por padrão,
     # o usuário escolhe na revisão se quiser (ver ADR-0001).
     forma_pagamento: FormaPagamento | None = None
+    # Nem caixinha: o extrato não sabe que elas existem. Mas se a pessoa
+    # marcar uma linha como `guardado` na revisão, a mesma regra do cadastro
+    # manual vale — conta com caixinhas exige escolher uma (ADR-10).
+    caixinha_id: int | None = None
     descricao: str = ""
     # Quando preenchido, cria uma regra para categorizar assim das próximas vezes.
     aprender_padrao: str | None = None

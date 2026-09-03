@@ -168,12 +168,26 @@ cobre só o primeiro caso. A trava passou a olhar o **resultado**, com a mudanç
 já aplicada na sessão e antes do commit, e vale para todo caminho que mexe em
 caixinha.
 
-Fica registrado o que **não** foi fechado, porque é outro problema: a soma das
-caixinhas pode passar do guardado da conta se uma retirada **sem caixinha**
-levar dinheiro que estava rotulado. Nenhuma caixinha fica negativa; o total da
-conta é que fica menor que a soma delas. Resolver exigiria uma decisão de
-produto — recusar retiradas que não nomeiam caixinha, ou exigir a caixinha
-quando a conta tiver alguma.
+## Adendo de implementação (31/08/2026) — não existe dinheiro solto
+
+Um segundo caso apareceu: a soma das caixinhas passava do guardado da conta
+quando uma retirada **sem caixinha** levava dinheiro que estava rotulado.
+Nenhuma caixinha ficava negativa; o total da conta é que ficava menor que a
+soma delas.
+
+Ao rever, a Kamilly corrigiu uma premissa deste ADR. O texto acima trata
+"guardado sem caixinha" como um estado normal e permanente ("o que a pessoa
+ainda não organizou"). Não é: **todo dinheiro guardado está numa caixinha ou
+num investimento.** O sem-caixinha existe só como estado de passagem, para o
+dinheiro lançado antes de as caixinhas existirem — exatamente o que
+`saldo_inicial` serve para rotular.
+
+Com isso, a regra ficou mais simples do que a validação condicional que se
+cogitou: assim que a conta ganha a primeira caixinha ativa, todo lançamento que
+mexe na reserva daquela conta precisa dizer em qual. Vale nas duas portas que
+criam lançamento — o cadastro/edição e a confirmação da importação, que ganhou
+`caixinha_id` em `TransacaoConfirmar`. Conta sem caixinha nenhuma continua como
+sempre foi.
 
 ## Consequências
 

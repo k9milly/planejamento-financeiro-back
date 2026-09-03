@@ -1134,12 +1134,33 @@ Duas consequências para a tela:
 
 Esvaziar até exatamente zero é permitido — a regra é sobre ficar negativa.
 
+### Conta com caixinhas exige escolher uma
+
+Assim que a conta tem **pelo menos uma caixinha ativa**, todo lançamento que
+mexe na reserva dela precisa mandar `caixinha_id`: `guardado`, `retirado`, e
+`rendimento`/`perda` com `destino="guardado"`. Sem ele, `422` — e a mensagem
+lista os nomes das caixinhas disponíveis, para a tela poder mostrar as opções.
+
+`entrada`, `saida` e transferência entre contas não são afetadas.
+
+Para a tela isso significa que o seletor "Caixinha", quando a conta escolhida
+tiver caixinhas, **não é opcional** naqueles tipos — vira campo obrigatório.
+Numa conta sem caixinha nenhuma o seletor não aparece e nada muda.
+
+A mesma regra vale na confirmação da importação, que por isso aceita
+`caixinha_id` em cada `TransacaoConfirmar`.
+
 ### Guardado sem caixinha — a tela calcula, não tem endpoint
 
 A diferença entre o guardado da conta e a soma das caixinhas dela não tem rota
 própria: é `por_conta[].guardado` de `GET /anos/{ano}/resumo` menos a soma dos
 `saldo` de `GET /contas/{id}/caixinhas`, casando pelo `conta_id`. Mesmo padrão
 da seção 8, onde o saldo da conta também vem do resumo e não de `GET /contas`.
+
+Numa conta já organizada esse número tende a **zero** — todo guardado tem
+caixinha. Ele só é maior que zero enquanto houver dinheiro lançado antes de as
+caixinhas existirem, e é justamente esse saldo que `saldo_inicial` consome ao
+criar uma caixinha nova.
 
 ### Desativar uma caixinha
 
