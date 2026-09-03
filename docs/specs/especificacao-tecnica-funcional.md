@@ -1117,6 +1117,23 @@ já define.
 Só as caixinhas **ativas** contam: desativar uma devolve o dinheiro dela ao
 guardado sem rótulo, e a meta volta ao cálculo do ADR-06.
 
+### Caixinha nunca fica negativa
+
+Qualquer operação que deixaria uma caixinha com saldo abaixo de zero responde
+`422`, com a mensagem dizendo qual caixinha e quanto faltaria — dá para mostrar
+direto na tela. Vale para os quatro caminhos: criar lançamento, editar, excluir
+e transferir.
+
+Duas consequências para a tela:
+
+- **Excluir um lançamento pode falhar.** Apagar o `guardado` que financiou uma
+  retirada posterior é recusado. A tela precisa tratar `422` no `DELETE` de
+  lançamento, não só nos `POST`/`PATCH`.
+- **Editar valor ou tipo pode falhar pelo mesmo motivo**, mesmo sem tocar em
+  `caixinha_id`.
+
+Esvaziar até exatamente zero é permitido — a regra é sobre ficar negativa.
+
 ### Guardado sem caixinha — a tela calcula, não tem endpoint
 
 A diferença entre o guardado da conta e a soma das caixinhas dela não tem rota

@@ -375,11 +375,31 @@ incidente do default booleano. A migração agora alarga a coluna, e
 migrações e o compara com os modelos, para essa classe de divergência não
 depender de alguém lembrar.
 
-**Fora do que foi pedido, e não feito:** nada impede um `retirado` de deixar a
-caixinha com saldo negativo. O ADR pede validação de saldo só na transferência
-e no `saldo_inicial`, e é isso que existe. Cobrir o `retirado` exigiria
-revalidar a caixinha inteira a cada edição e exclusão de lançamento — decisão
-a tomar se acontecer na prática.
+**Caixinha nunca fica negativa.** O ADR pede validação de saldo só na
+transferência e no `saldo_inicial`; isso deixava três caminhos abertos, todos
+verificados na prática antes de fechar:
+
+| Caminho | O que dava |
+| --- | --- |
+| `retirado` maior que o saldo da caixinha | `-400,00` |
+| apagar o `guardado` que financiou uma retirada anterior | `-500,00` |
+| editar o valor de uma retirada já gravada | `-400,00` |
+
+Checar a operação que a pessoa está fazendo cobriria só o primeiro. Como o
+saldo é derivado, a trava (`garantir_nao_negativas`) olha o **resultado**: roda
+com a mudança já aplicada na sessão, no `flush`, antes do `commit` — recusar
+ali deixa a transação sem gravar. Vale para criar, editar, excluir e
+transferir. Um `PATCH` confere também a caixinha de onde o lançamento saiu, não
+só a de destino.
+
+Lançamentos sem caixinha não mudaram de comportamento.
+
+**Ainda em aberto, e não é o mesmo problema:** a soma das caixinhas pode passar
+do guardado da conta se um `retirado` **sem caixinha** levar embora dinheiro
+que estava rotulado. Nenhuma caixinha fica negativa — o total da conta é que
+fica menor que a soma delas. Fechar isso significaria recusar retiradas que não
+nomeiam caixinha, ou exigir a caixinha quando a conta tiver alguma; é decisão
+de produto, não de implementação.
 
 ## Fora desta rodada (decisões já registradas nas Partes 1 e 2, não tarefas)
 

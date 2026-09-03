@@ -14,6 +14,14 @@ O que **sobra** do guardado da conta depois de descontar as caixinhas ativas é
 o "guardado sem caixinha": o dinheiro que existia antes deste ADR, ou que
 ainda não foi organizado. É contra ele que `saldo_inicial` é validado na
 criação — senão uma caixinha nova inventaria dinheiro que a conta não tem.
+
+**Nenhuma caixinha pode ficar com saldo negativo.** Como o saldo é derivado,
+não basta checar a operação que a pessoa está fazendo: retirar mais do que a
+caixinha tem, apagar o depósito que financiou uma retirada antiga, ou editar o
+valor de um lançamento já gravado levam ao mesmo lugar por caminhos
+diferentes. Por isso `garantir_nao_negativas` roda depois da mudança já estar
+aplicada na sessão (no `flush`, antes do `commit`) e olha o resultado — que é
+a única coisa que precisa fazer sentido, independente de como se chegou nele.
 """
 
 from __future__ import annotations
@@ -105,6 +113,38 @@ def guardado_da_conta(conta_id: int, db: Session) -> Decimal:
     fechamento = totais_do_ano(ano_ref, db)[-1]
     carteiras = fechamento.por_conta.get(conta_id)
     return carteiras.guardado if carteiras else ZERO
+
+
+def garantir_nao_negativas(ids: set[int], db: Session, erro) -> None:
+    """Recusa a operação se alguma das caixinhas terminar negativa.
+
+    Chamar **depois** do `flush` e **antes** do `commit`: os saldos são
+    calculados a partir do que está na sessão, então a mudança precisa já ter
+    sido aplicada. Levantar aqui deixa a transação sem commit, e o `close` da
+    dependência do FastAPI desfaz tudo.
+
+    Recebe a classe de erro a levantar, como `validar_coerencia` — o serviço
+    não conhece HTTP.
+    """
+    ids = {i for i in ids if i is not None}
+    if not ids:
+        return
+
+    caixinhas = db.query(Caixinha).filter(Caixinha.id.in_(ids)).all()
+    atuais = saldos(caixinhas, db)
+
+    for caixinha in caixinhas:
+        resultante = atuais.get(caixinha.id, ZERO)
+        if resultante < ZERO:
+            raise erro(
+                f"Esta operação deixaria a caixinha '{caixinha.nome}' negativa "
+                f"em {_reais(-resultante)}. Uma caixinha é uma parte do que a "
+                "conta já guardou, não um limite de crédito."
+            )
+
+
+def _reais(valor: Decimal) -> str:
+    return f"R$ {valor:.2f}".replace(".", ",")
 
 
 def guardado_sem_caixinha(conta_id: int, db: Session) -> Decimal:

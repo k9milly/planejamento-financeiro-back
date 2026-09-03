@@ -495,3 +495,147 @@ class TestVinculoComMeta:
         ).json()
         assert atualizada["meta_id"] == meta_prazo["id"]
         assert atualizada["nome"] == "Outro"
+
+
+class TestNuncaFicaNegativa:
+    """Uma caixinha é uma parte do que a conta guardou, não um limite de crédito.
+
+    Como o saldo é derivado, o saldo negativo é alcançável por três caminhos
+    diferentes — e checar só a operação que a pessoa está fazendo cobriria
+    apenas o primeiro. Por isso a trava olha o **resultado**, depois da mudança
+    já estar aplicada na sessão e antes do commit.
+    """
+
+    @pytest.fixture()
+    def com_saldo(self, cliente, ano, conta):
+        """Uma caixinha com R$ 500, alimentada por um lançamento de verdade."""
+        caixinha = criar_caixinha(cliente, conta, "Reserva").json()
+        deposito = guardar(cliente, conta, "500.00", caixinha["id"]).json()
+        return caixinha, deposito
+
+    def _saldo(self, cliente, conta):
+        return cliente.get(f"/contas/{conta['id']}/caixinhas").json()[0]["saldo"]
+
+    # --- caminho 1: retirar mais do que a caixinha tem ---
+    def test_retirar_mais_do_que_tem_e_recusado(self, cliente, ano, conta, com_saldo):
+        caixinha, _ = com_saldo
+        resposta = guardar(cliente, conta, "900.00", caixinha["id"], tipo="retirado")
+
+        assert resposta.status_code == 422
+        assert "negativa" in resposta.json()["detail"]
+        assert "400,00" in resposta.json()["detail"]
+        assert self._saldo(cliente, conta) == "500.00"
+
+    def test_retirar_o_saldo_exato_e_permitido(self, cliente, ano, conta, com_saldo):
+        """A trava é sobre ficar negativa, não sobre esvaziar."""
+        caixinha, _ = com_saldo
+        assert guardar(
+            cliente, conta, "500.00", caixinha["id"], tipo="retirado"
+        ).status_code == 201
+        assert self._saldo(cliente, conta) == "0.00"
+
+    def test_perda_no_guardado_tambem_respeita(self, cliente, ano, conta, com_saldo):
+        caixinha, _ = com_saldo
+        resposta = cliente.post(
+            f"/anos/{ANO}/lancamentos",
+            json={
+                "data": HOJE.isoformat(),
+                "valor": "900.00",
+                "tipo": "perda",
+                "destino": "guardado",
+                "conta_id": conta["id"],
+                "caixinha_id": caixinha["id"],
+            },
+        )
+        assert resposta.status_code == 422
+
+    # --- caminho 2: apagar o lançamento que financiou uma saída anterior ---
+    def test_apagar_o_deposito_que_financiou_a_retirada_e_recusado(
+        self, cliente, ano, conta, com_saldo
+    ):
+        caixinha, deposito = com_saldo
+        guardar(cliente, conta, "500.00", caixinha["id"], tipo="retirado")
+
+        resposta = cliente.delete(f"/anos/{ANO}/lancamentos/{deposito['id']}")
+        assert resposta.status_code == 422
+        assert "negativa" in resposta.json()["detail"]
+
+        # Nada foi gravado: o depósito continua na lista.
+        ids = [l["id"] for l in cliente.get(f"/anos/{ANO}/lancamentos").json()]
+        assert deposito["id"] in ids
+        assert self._saldo(cliente, conta) == "0.00"
+
+    def test_apagar_o_deposito_e_permitido_se_a_caixinha_aguenta(
+        self, cliente, ano, conta, com_saldo
+    ):
+        caixinha, deposito = com_saldo
+        guardar(cliente, conta, "200.00", caixinha["id"])
+
+        # Sobram R$ 200 sem o depósito de 500 — nada fica negativo.
+        assert cliente.delete(
+            f"/anos/{ANO}/lancamentos/{deposito['id']}"
+        ).status_code == 204
+        assert self._saldo(cliente, conta) == "200.00"
+
+    # --- caminho 3: editar um lançamento já gravado ---
+    def test_aumentar_o_valor_de_uma_retirada_e_recusado(
+        self, cliente, ano, conta, com_saldo
+    ):
+        caixinha, _ = com_saldo
+        retirada = guardar(
+            cliente, conta, "100.00", caixinha["id"], tipo="retirado"
+        ).json()
+
+        resposta = cliente.patch(
+            f"/anos/{ANO}/lancamentos/{retirada['id']}", json={"valor": "900.00"}
+        )
+        assert resposta.status_code == 422
+        assert self._saldo(cliente, conta) == "400.00"
+
+    def test_virar_um_guardado_em_retirada_e_recusado(self, cliente, ano, conta):
+        """O tipo muda o sinal: o mesmo lançamento passa a tirar em vez de pôr."""
+        caixinha = criar_caixinha(cliente, conta, "Reserva").json()
+        deposito = guardar(cliente, conta, "500.00", caixinha["id"]).json()
+
+        resposta = cliente.patch(
+            f"/anos/{ANO}/lancamentos/{deposito['id']}", json={"tipo": "retirado"}
+        )
+        assert resposta.status_code == 422
+        assert self._saldo(cliente, conta) == "500.00"
+
+    def test_mover_o_deposito_para_outra_caixinha_e_recusado(
+        self, cliente, ano, conta, com_saldo
+    ):
+        """A caixinha que perde o depósito também precisa ser conferida."""
+        caixinha, deposito = com_saldo
+        guardar(cliente, conta, "500.00", caixinha["id"], tipo="retirado")
+        outra = criar_caixinha(cliente, conta, "Viagem").json()
+
+        resposta = cliente.patch(
+            f"/anos/{ANO}/lancamentos/{deposito['id']}",
+            json={"caixinha_id": outra["id"]},
+        )
+        assert resposta.status_code == 422
+        assert "Reserva" in resposta.json()["detail"]
+
+    # --- a transferência já era conferida, mas a regra vale igual ---
+    def test_transferencia_nao_zera_por_baixo(self, cliente, ano, conta, com_saldo):
+        caixinha, _ = com_saldo
+        destino = criar_caixinha(cliente, conta, "Viagem").json()
+
+        resposta = cliente.post(
+            f"/contas/{conta['id']}/caixinhas/transferir",
+            json={
+                "caixinha_origem_id": caixinha["id"],
+                "caixinha_destino_id": destino["id"],
+                "valor": "900.00",
+            },
+        )
+        assert resposta.status_code == 422
+        assert self._saldo(cliente, conta) == "500.00"
+
+    # --- lançamentos sem caixinha não são afetados pela trava ---
+    def test_lancamento_sem_caixinha_continua_livre(self, cliente, ano, conta):
+        """A trava é sobre caixinha; quem não usa caixinha não muda de comportamento."""
+        assert guardar(cliente, conta, "100.00").status_code == 201
+        assert guardar(cliente, conta, "900.00", tipo="retirado").status_code == 201

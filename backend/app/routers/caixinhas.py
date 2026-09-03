@@ -34,7 +34,11 @@ from app.schemas import (
     CaixinhaOut,
     TransferenciaCaixinha,
 )
-from app.services.caixinhas import guardado_sem_caixinha, saldos
+from app.services.caixinhas import (
+    garantir_nao_negativas,
+    guardado_sem_caixinha,
+    saldos,
+)
 
 router = APIRouter(prefix="/contas/{conta_id}/caixinhas", tags=["caixinhas"])
 
@@ -227,6 +231,9 @@ def transferir(
                 "receber nem enviar dinheiro."
             )
 
+    # Conferido aqui para a mensagem poder dizer quanto há na origem; a trava
+    # geral abaixo é que garante a regra, e vale para todo caminho que mexe em
+    # caixinha.
     disponivel = saldos([origem], db)[origem.id]
     if dados.valor > disponivel:
         raise _erro(
@@ -260,5 +267,7 @@ def transferir(
             descricao=f"{origem.nome} → {destino.nome}",
         )
     )
+    db.flush()
+    garantir_nao_negativas({origem.id, destino.id}, db, _erro)
     db.commit()
     return _saida(destino, db)

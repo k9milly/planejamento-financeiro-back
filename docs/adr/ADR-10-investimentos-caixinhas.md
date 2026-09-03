@@ -155,6 +155,26 @@ lançamento (já existente) ganha um segundo seletor, condicional: depois
 de escolher a conta, se ela tiver caixinhas ativas, aparece "Caixinha
 (opcional)" listando as caixinhas daquela conta.
 
+## Adendo de implementação (31/08/2026) — saldo nunca negativo
+
+O ADR pede validação de saldo na transferência e no `saldo_inicial`. Ao
+implementar, três outros caminhos levavam a uma caixinha negativa, e todos
+foram reproduzidos antes de fechar: `retirado` maior que o saldo; apagar o
+`guardado` que financiou uma retirada anterior; e editar o valor (ou o tipo) de
+um lançamento já gravado.
+
+A causa comum é o saldo ser derivado: validar a operação que está sendo feita
+cobre só o primeiro caso. A trava passou a olhar o **resultado**, com a mudança
+já aplicada na sessão e antes do commit, e vale para todo caminho que mexe em
+caixinha.
+
+Fica registrado o que **não** foi fechado, porque é outro problema: a soma das
+caixinhas pode passar do guardado da conta se uma retirada **sem caixinha**
+levar dinheiro que estava rotulado. Nenhuma caixinha fica negativa; o total da
+conta é que fica menor que a soma delas. Resolver exigiria uma decisão de
+produto — recusar retiradas que não nomeiam caixinha, ou exigir a caixinha
+quando a conta tiver alguma.
+
 ## Consequências
 
 - Migração nova: tabela `caixinhas`; `Lancamento` ganha `caixinha_id` e
