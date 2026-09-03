@@ -9,7 +9,14 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models import Conta, FaturaMensal, GastoFixo, Lancamento, TipoConta
+from app.models import (
+    Caixinha,
+    Conta,
+    FaturaMensal,
+    GastoFixo,
+    Lancamento,
+    TipoConta,
+)
 from app.schemas import ContaAtualizar, ContaCriar, ContaOut, _validar_coerencia_conta
 
 router = APIRouter(prefix="/contas", tags=["contas"])
@@ -91,6 +98,9 @@ def excluir(conta_id: int, db: Session = Depends(get_db)) -> None:
         .count()
         or db.query(GastoFixo).filter(GastoFixo.conta_id == conta_id).count()
         or db.query(FaturaMensal).filter(FaturaMensal.cartao_id == conta_id).count()
+        # Caixinhas contam como uso: apagar a conta deixaria a divisão da
+        # reserva órfã, apontando para uma conta que não existe mais.
+        or db.query(Caixinha).filter(Caixinha.conta_id == conta_id).count()
     )
 
     if em_uso:
