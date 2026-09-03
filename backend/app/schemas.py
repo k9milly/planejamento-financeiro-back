@@ -166,6 +166,10 @@ class LancamentoBase(BaseModel):
     destino: DestinoRendimento | None = None
     categoria_id: int | None = None
     forma_pagamento: FormaPagamento | None = None
+    # Caixinha da reserva envolvida (ADR-10). Opcional: sem ela, o guardado
+    # entra na conta sem rótulo, exatamente como antes deste campo existir.
+    caixinha_id: int | None = None
+    caixinha_destino_id: int | None = None
     descricao: str = ""
 
     @model_validator(mode="after")
@@ -179,6 +183,8 @@ class LancamentoBase(BaseModel):
         validar_coerencia(
             self.tipo, self.destino, self.categoria_id, self.conta_id,
             self.conta_destino_id, self.forma_pagamento, ValueError,
+            caixinha_id=self.caixinha_id,
+            caixinha_destino_id=self.caixinha_destino_id,
         )
         return self
 
@@ -195,6 +201,9 @@ def validar_coerencia(
     conta_destino_id: int | None,
     forma_pagamento: FormaPagamento | None,
     erro,
+    *,
+    caixinha_id: int | None = None,
+    caixinha_destino_id: int | None = None,
 ) -> None:
     """Regras de combinação entre os campos de um lançamento.
 
@@ -228,6 +237,58 @@ def validar_coerencia(
             raise erro("A conta de destino precisa ser diferente da de origem.")
     elif conta_destino_id is not None:
         raise erro("'conta_destino_id' só se aplica a transferências.")
+
+    _validar_caixinhas(tipo, destino, caixinha_id, caixinha_destino_id, erro)
+
+
+# Onde uma caixinha faz sentido: nos tipos que mexem na reserva. Rendimento e
+# perda entram só quando atingem o guardado — se o rendimento caiu na conta
+# corrente, não há caixinha envolvida (ADR-10).
+TIPOS_COM_CAIXINHA = {
+    TipoLancamento.GUARDADO,
+    TipoLancamento.RETIRADO,
+    TipoLancamento.TRANSFERENCIA_CAIXINHA,
+}
+
+
+def _validar_caixinhas(
+    tipo: TipoLancamento,
+    destino: DestinoRendimento | None,
+    caixinha_id: int | None,
+    caixinha_destino_id: int | None,
+    erro,
+) -> None:
+    """Quando `caixinha_id` e `caixinha_destino_id` são aceitos (ADR-10).
+
+    Não checa aqui se a caixinha pertence à conta do lançamento nem se está
+    ativa — isso depende de olhar o banco, e quem faz é o router.
+    """
+    if tipo is TipoLancamento.TRANSFERENCIA_CAIXINHA:
+        if caixinha_id is None or caixinha_destino_id is None:
+            raise erro(
+                "Transferência entre caixinhas exige a caixinha de origem e a "
+                "de destino."
+            )
+        if caixinha_id == caixinha_destino_id:
+            raise erro("A caixinha de destino precisa ser diferente da de origem.")
+        return
+
+    if caixinha_destino_id is not None:
+        raise erro(
+            "'caixinha_destino_id' só se aplica a transferências entre caixinhas."
+        )
+
+    if caixinha_id is None:
+        return
+
+    atinge_o_guardado = tipo in TIPOS_COM_CAIXINHA or (
+        tipo in TIPOS_COM_DESTINO and destino is DestinoRendimento.GUARDADO
+    )
+    if not atinge_o_guardado:
+        raise erro(
+            "'caixinha_id' só se aplica a lançamentos que mexem na reserva: "
+            "guardado, retirado, ou rendimento/perda com destino 'guardado'."
+        )
 
 
 def validar_conta_compativel(
@@ -268,6 +329,8 @@ class LancamentoAtualizar(BaseModel):
     destino: DestinoRendimento | None = None
     categoria_id: int | None = None
     forma_pagamento: FormaPagamento | None = None
+    caixinha_id: int | None = None
+    caixinha_destino_id: int | None = None
     descricao: str | None = None
 
 
@@ -285,6 +348,8 @@ class LancamentoOut(_Base):
     categoria_id: int | None
     categoria: CategoriaOut | None
     forma_pagamento: FormaPagamento | None
+    caixinha_id: int | None
+    caixinha_destino_id: int | None
     descricao: str
     fitid: str | None
 
@@ -634,3 +699,50 @@ class AlertaFaturaOut(BaseModel):
 AlertaOut = Annotated[
     AlertaGastoFixoOut | AlertaFaturaOut, Field(discriminator="tipo")
 ]
+
+
+# --------------------------------------------------------------------------- #
+# Caixinhas (ADR-10)
+# --------------------------------------------------------------------------- #
+class CaixinhaCriar(BaseModel):
+    nome: str = Field(min_length=1, max_length=60)
+    meta_id: int | None = None
+    # Dinheiro que já estava guardado nesta caixinha antes de ela existir no
+    # sistema. O teto é o "guardado sem caixinha" da conta, checado no router
+    # — aqui só se garante que não é negativo.
+    saldo_inicial: Decimal = Field(
+        default=Decimal("0.00"), ge=0, max_digits=12, decimal_places=2
+    )
+
+
+class CaixinhaAtualizar(BaseModel):
+    """`saldo_inicial` não está aqui de propósito.
+
+    Ele é a fotografia do que existia na criação; mudá-lo depois reescreveria
+    o passado da caixinha sem nenhum lançamento explicando a diferença. Para
+    corrigir o valor, o caminho é lançar (guardado/retirado) ou transferir.
+    """
+
+    nome: str | None = Field(default=None, min_length=1, max_length=60)
+    # `None` explícito desvincula a meta — por isso o PATCH usa
+    # `exclude_unset`: campo ausente e campo nulo querem dizer coisas
+    # diferentes aqui.
+    meta_id: int | None = None
+
+
+class CaixinhaOut(_Base):
+    id: int
+    conta_id: int
+    nome: str
+    meta_id: int | None
+    # Derivado, não é coluna: `saldo_inicial` mais o efeito dos lançamentos que
+    # apontam para esta caixinha (ver `services/caixinhas.py`).
+    saldo: Decimal
+    criada_em: datetime
+    ativa: bool
+
+
+class TransferenciaCaixinha(BaseModel):
+    caixinha_origem_id: int
+    caixinha_destino_id: int
+    valor: Decimal = Field(gt=0, max_digits=12, decimal_places=2)

@@ -307,6 +307,80 @@ arquivo CSV/XLSX real do banco da Kamilly. Se divergir, o ajuste é mapear
 nomes de coluna dentro de `tabular.py` — nada fora dele sabe como o arquivo é
 feito, e nem o contrato nem a tela mudam.
 
+## Fase 7 — Investimentos: caixinhas por conta (ADR-10)
+
+**O quê:** implementar o contrato da seção 15 da Parte 1 — ler o
+`ADR-10` antes de codificar, ele explica o porquê de cada decisão
+(vínculo opcional com meta, escopo por conta, transferência direta).
+
+- Migração: tabela `caixinhas` (`id`, `conta_id`, `nome`, `meta_id`
+  nullable, `saldo`, `criada_em`, `ativa`). `Lancamento` ganha
+  `caixinha_id` e `caixinha_destino_id` (ambos nullable).
+  `TipoLancamento` ganha o valor `transferencia_caixinha`.
+- `POST /contas/{conta_id}/caixinhas` aceita `saldo_inicial` opcional —
+  validar que não passa do "guardado sem caixinha" da conta (guardado
+  total da conta menos soma das caixinhas ativas já existentes) antes de
+  aceitar.
+- `caixinha_id` em `LancamentoCriar` aceito só quando `tipo` é
+  `guardado`/`retirado`, ou `rendimento`/`perda` com
+  `destino="guardado"` — e só se a caixinha pertencer à mesma
+  `conta_id` do lançamento.
+- `POST /contas/{conta_id}/caixinhas/transferir` cria um `Lancamento`
+  `tipo=transferencia_caixinha` — não conta como entrada/saída do
+  período nos agregados de `GET /anos/{ano}/resumo`, e não muda o total
+  de `guardado` da conta (só realoca entre duas caixinhas dela). Exigir
+  que origem e destino pertençam à mesma conta.
+- `GET /metas-poupanca/ativas`: quando existir `Caixinha` com
+  `meta_id` apontando pra uma meta ativa, trocar a fonte de
+  `guardado_acumulado` (soma do `saldo` das caixinhas vinculadas) e de
+  `guardado_no_mes` (soma dos lançamentos de guardado direcionados a
+  essas caixinhas dentro do mês corrente) — sem mudar o schema da
+  resposta. Sem caixinha vinculada, comportamento idêntico ao que o
+  `ADR-06` já define.
+- Desativar uma caixinha (`DELETE`) com saldo > 0 devolve esse saldo
+  para "guardado sem caixinha" da conta — não é permitido apagar
+  dinheiro, só soltar o rótulo.
+
+**Critério de aceite:** criar duas caixinhas na mesma conta com
+`saldo_inicial` que juntas excedem o guardado atual da conta é
+rejeitado (`422`); transferir entre duas caixinhas da mesma conta não
+altera `GET /anos/{ano}/resumo` (nem entradas/saídas, nem o guardado
+total da conta); uma meta com caixinha vinculada reflete o saldo dela em
+`guardado_acumulado`; os testes existentes de `GET
+/metas-poupanca/ativas` sem caixinha vinculada continuam passando sem
+alteração.
+
+**Feito em 31/08/2026.** Duas coisas saíram diferentes do que o ADR-10
+descreve, e valem revisão:
+
+- **Não existe coluna `saldo` na caixinha.** O ADR a lista como campo; ela é
+  derivada de `saldo_inicial` mais os lançamentos que apontam para a caixinha,
+  como o progresso de `MetaPoupanca` já era. Uma coluna precisaria ser
+  corrigida a cada criação, edição e exclusão de lançamento, e a primeira que
+  escapasse deixaria o número mentindo em silêncio. De quebra, a desativação
+  passou a funcionar sozinha: fora da lista de ativas, o dinheiro volta a
+  contar como "sem caixinha", sem acerto de contas. **O contrato não muda** —
+  `CaixinhaOut.saldo` continua saindo na resposta.
+- **Caixinha só em conta corrente.** Um cartão de crédito não tem reserva
+  (ADR-0002), então uma caixinha ali nunca poderia ter dinheiro. `422` com
+  mensagem explicando.
+
+**Uma armadilha que quase foi para produção:** `lancamentos.tipo` é um VARCHAR
+dimensionado pelo nome mais longo do enum, e estava em `VARCHAR(13)`
+(`TRANSFERENCIA`). `TRANSFERENCIA_CAIXINHA` tem 22 caracteres. O SQLite ignora
+o tamanho declarado e a suíte inteira passava; o Postgres recusaria com *value
+too long*, e a primeira transferência quebraria só lá — o mesmo formato do
+incidente do default booleano. A migração agora alarga a coluna, e
+`tests/test_schema_postgres.py` ganhou um teste que sobe um banco pelas
+migrações e o compara com os modelos, para essa classe de divergência não
+depender de alguém lembrar.
+
+**Fora do que foi pedido, e não feito:** nada impede um `retirado` de deixar a
+caixinha com saldo negativo. O ADR pede validação de saldo só na transferência
+e no `saldo_inicial`, e é isso que existe. Cobrir o `retirado` exigiria
+revalidar a caixinha inteira a cada edição e exclusão de lançamento — decisão
+a tomar se acontecer na prática.
+
 ## Fora desta rodada (decisões já registradas nas Partes 1 e 2, não tarefas)
 
 - Nenhum endpoint de orçamento/meta por categoria (`budgets`, dentro da tela

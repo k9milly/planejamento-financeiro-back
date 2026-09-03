@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session, joinedload
 
 from app.database import get_db
-from app.models import Ano, Categoria, Conta, Lancamento, TipoLancamento
+from app.models import Ano, Caixinha, Categoria, Conta, Lancamento, TipoLancamento
 from app.deps import obter_ano, obter_ano_editavel
 from app.schemas import (
     LancamentoAtualizar,
@@ -64,6 +64,8 @@ def criar(
     conta = _validar_conta(dados.conta_id, db)
     _validar_conta(dados.conta_destino_id, db)
     _validar_conta_compativel(dados.tipo, dados.forma_pagamento, conta)
+    _validar_caixinha(dados.caixinha_id, dados.conta_id, db)
+    _validar_caixinha(dados.caixinha_destino_id, dados.conta_id, db)
 
     lanc = Lancamento(
         ano_id=ano_ref.id,
@@ -103,6 +105,10 @@ def atualizar(
     _validar_coerencia(lanc)
     conta = _validar_conta(lanc.conta_id, db)
     _validar_conta_compativel(lanc.tipo, lanc.forma_pagamento, conta)
+    # Sempre revalidadas, mesmo sem virem no PATCH: mudar só a `conta_id`
+    # deixaria a caixinha antiga apontando para outra conta.
+    _validar_caixinha(lanc.caixinha_id, lanc.conta_id, db)
+    _validar_caixinha(lanc.caixinha_destino_id, lanc.conta_id, db)
 
     db.commit()
     db.refresh(lanc)
@@ -184,6 +190,36 @@ def _validar_conta_compativel(
     validar_conta_compativel(tipo, forma_pagamento, conta.tipo, erro)
 
 
+def _validar_caixinha(caixinha_id: int | None, conta_id: int, db: Session) -> None:
+    """A caixinha precisa existir, estar ativa, e ser da conta do lançamento.
+
+    A regra de "qual tipo aceita caixinha" fica em `validar_coerencia`, no
+    schema; aqui só o que exige olhar o banco (ADR-10).
+    """
+    if caixinha_id is None:
+        return
+
+    caixinha = db.get(Caixinha, caixinha_id)
+    if caixinha is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=f"Caixinha {caixinha_id} não existe.",
+        )
+    if caixinha.conta_id != conta_id:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=(
+                f"A caixinha '{caixinha.nome}' é de outra conta. Uma caixinha "
+                "só recebe dinheiro da conta a que pertence."
+            ),
+        )
+    if not caixinha.ativa:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=f"A caixinha '{caixinha.nome}' está desativada.",
+        )
+
+
 def _validar_coerencia(lanc: Lancamento) -> None:
     """Mesmas regras do schema de criação, aplicadas ao objeto já mesclado.
 
@@ -205,4 +241,6 @@ def _validar_coerencia(lanc: Lancamento) -> None:
         lanc.conta_destino_id,
         lanc.forma_pagamento,
         erro,
+        caixinha_id=lanc.caixinha_id,
+        caixinha_destino_id=lanc.caixinha_destino_id,
     )

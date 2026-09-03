@@ -97,6 +97,9 @@ class TestProtecao:
         ("get", "/anos/2026/wishlist/total"),
         ("get", "/regras"),
         ("post", "/anos/2026/importacao/confirmar"),
+        ("get", "/contas/1/caixinhas"),
+        ("post", "/contas/1/caixinhas"),
+        ("post", "/contas/1/caixinhas/transferir"),
     ]
 
     @pytest.mark.parametrize("metodo,rota", ROTAS)
