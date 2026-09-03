@@ -45,6 +45,7 @@ class TipoLancamento(str, enum.Enum):
     RENDIMENTO    carteira indicada por `destino` += valor
     PERDA         carteira indicada por `destino` -= valor
     TRANSFERENCIA saldo da conta -= valor, saldo da conta destino += valor
+    TRANSFERENCIA_CAIXINHA  nenhum efeito nas carteiras da conta
 
     PERDA existe porque investimento cai. Sem ela, uma queda do ETF teria de ser
     lançada como saída, e apareceria como gasto no relatório por categoria —
@@ -53,6 +54,12 @@ class TipoLancamento(str, enum.Enum):
     TRANSFERENCIA existe porque mover dinheiro entre contas suas não é receita
     nem despesa. Lançar como saída em uma e entrada na outra inflaria os dois
     totais do mês sem que nada tivesse sido gasto ou recebido.
+
+    TRANSFERENCIA_CAIXINHA move dinheiro entre duas caixinhas da mesma conta
+    (ADR-10). É o único tipo que não mexe em carteira nenhuma: o dinheiro
+    continua guardado na mesma conta, só troca de rótulo. Existe como
+    lançamento — em vez de uma edição silenciosa de saldo — para a realocação
+    aparecer no histórico como qualquer outra movimentação.
     """
 
     ENTRADA = "entrada"
@@ -62,6 +69,7 @@ class TipoLancamento(str, enum.Enum):
     RENDIMENTO = "rendimento"
     PERDA = "perda"
     TRANSFERENCIA = "transferencia"
+    TRANSFERENCIA_CAIXINHA = "transferencia_caixinha"
 
 
 class DestinoRendimento(str, enum.Enum):
@@ -329,6 +337,17 @@ class Lancamento(Base):
         ForeignKey("categorias.id", ondelete="SET NULL"), nullable=True, index=True
     )
 
+    # Em qual caixinha da reserva o dinheiro entrou ou de qual saiu (ADR-10).
+    # Nulo é o comportamento de sempre: entra no guardado da conta sem rótulo.
+    # Numa transferência entre caixinhas, é a de origem.
+    caixinha_id: Mapped[int | None] = mapped_column(
+        ForeignKey("caixinhas.id", ondelete="RESTRICT"), nullable=True, index=True
+    )
+    # Só em TRANSFERENCIA_CAIXINHA: para qual caixinha o dinheiro foi.
+    caixinha_destino_id: Mapped[int | None] = mapped_column(
+        ForeignKey("caixinhas.id", ondelete="RESTRICT"), nullable=True
+    )
+
     # Identificador da transação no extrato do banco (FITID do OFX). Preenchido
     # só em lançamentos importados; é o que impede que reimportar o mesmo
     # extrato duplique tudo. Único por ano, não global: bancos diferentes podem
@@ -344,6 +363,10 @@ class Lancamento(Base):
     conta: Mapped["Conta"] = relationship(foreign_keys=[conta_id])
     conta_destino: Mapped["Conta | None"] = relationship(
         foreign_keys=[conta_destino_id]
+    )
+    caixinha: Mapped["Caixinha | None"] = relationship(foreign_keys=[caixinha_id])
+    caixinha_destino: Mapped["Caixinha | None"] = relationship(
+        foreign_keys=[caixinha_destino_id]
     )
 
 
@@ -507,6 +530,72 @@ class MetaPoupanca(Base):
     ativa: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=True, server_default=true()
     )
+
+
+class Caixinha(Base):
+    """Uma divisão nomeada da reserva de uma conta (ADR-10).
+
+    A Kamilly guarda dinheiro em caixinhas nomeadas dentro do banco — uma
+    reserva geral, outra para juntar o valor da fatura. O sistema já somava um
+    `guardado` por conta; a caixinha dá nome às partes desse total.
+
+    O saldo de uma caixinha é sempre uma **fração** do que já está guardado na
+    conta, nunca dinheiro novo. A soma das caixinhas ativas de uma conta não
+    passa do guardado dela; a diferença é o "guardado sem caixinha" — o que
+    existia antes deste ADR, ou o que ainda não foi organizado.
+
+    **Não existe coluna `saldo`.** O saldo é derivado, como o progresso de
+    `MetaPoupanca`: `saldo_inicial` mais o efeito dos lançamentos que apontam
+    para esta caixinha (ver `services/caixinhas.py`). Uma coluna de saldo teria
+    de ser corrigida a cada criação, edição e exclusão de lançamento, e a
+    primeira que escapasse deixaria o número mentindo em silêncio. Derivar
+    também faz a desativação funcionar sozinha: sem a caixinha na lista das
+    ativas, o dinheiro dela volta a contar como "sem caixinha", sem precisar
+    de nenhum acerto de contas.
+
+    Vinculada a uma conta, e não solta, porque é assim que caixinha funciona
+    nos bancos dela. Só em conta corrente: um cartão de crédito não tem
+    reserva (ADR-0002), então uma caixinha ali nunca poderia ter dinheiro.
+    """
+
+    __tablename__ = "caixinhas"
+    __table_args__ = (
+        CheckConstraint("saldo_inicial >= 0", name="ck_caixinha_saldo_inicial"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    conta_id: Mapped[int] = mapped_column(
+        ForeignKey("contas.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
+    nome: Mapped[str] = mapped_column(String(60), nullable=False)
+
+    # Opcional: quando aponta para uma meta, o saldo desta caixinha passa a
+    # alimentar o progresso dela em vez do guardado da conta inteira (ADR-10).
+    # SET NULL porque desativar uma meta não deve derrubar a caixinha junto.
+    meta_id: Mapped[int | None] = mapped_column(
+        ForeignKey("metas_poupanca.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+
+    # Quanto já estava guardado nesta caixinha quando ela foi criada. Existe
+    # para dar nome, retroativamente, a dinheiro que já foi lançado sem
+    # caixinha — sem isso seria preciso inventar um lançamento de "guardado"
+    # que somaria de novo um dinheiro que a conta já tem.
+    saldo_inicial: Mapped[float] = mapped_column(
+        Numeric(12, 2), nullable=False, default=0, server_default="0"
+    )
+
+    criada_em: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, server_default=func.now()
+    )
+    # Desativar é soft-delete, como em `MetaPoupanca`: os lançamentos que
+    # apontam para ela continuam existindo, e o saldo volta a ser "guardado
+    # sem caixinha".
+    ativa: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default=true()
+    )
+
+    conta: Mapped["Conta"] = relationship()
+    meta: Mapped["MetaPoupanca | None"] = relationship()
 
 
 class FaturaMensal(Base):

@@ -29,6 +29,7 @@ from sqlalchemy.orm import sessionmaker
 from app.config import RAIZ
 from app.models import (
     Ano,
+    Caixinha,
     Categoria,
     Conta,
     CorFormaPagamento,
@@ -52,13 +53,16 @@ ORDEM = [
     Ano,
     SaldoInicial,
     RegraCategorizacao,
+    # Antes de `Lancamento`: ele aponta para caixinhas, e a caixinha aponta
+    # para a meta — as três precisam existir na ordem em que se referenciam.
+    MetaPoupanca,
+    Caixinha,
     GastoFixo,
     Lancamento,
     GastoFixoMensal,
     FaturaMensal,
     ItemWishlist,
     CorFormaPagamento,
-    MetaPoupanca,
 ]
 
 # A origem é o banco local, e não `settings.database_url`: na hora de copiar, a

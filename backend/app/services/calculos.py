@@ -187,6 +187,14 @@ def calcular_totais_mes(
                 carteiras(lanc.conta_destino_id).saldo += valor
             totais.transferido += valor
 
+        elif lanc.tipo is TipoLancamento.TRANSFERENCIA_CAIXINHA:
+            # Não faz nada, e isso é a regra — não um caso esquecido (ADR-10).
+            # O dinheiro continua guardado na mesma conta; só mudou de qual
+            # caixinha ele é. Saldo, guardado, entradas e saídas ficam iguais.
+            # Quem reparte o guardado entre as caixinhas é
+            # `services/caixinhas.py`, não este cálculo.
+            pass
+
     totais.gastos_por_categoria = dict(
         sorted(por_categoria.items(), key=lambda kv: kv[1], reverse=True)
     )
@@ -239,7 +247,9 @@ def variacao_do_guardado(lancamentos: Iterable[Lancamento]) -> Decimal:
     criada o progresso de toda a reserva já existente.
 
     Os quatro tipos que mexem na reserva estão aqui, e só aqui, para a regra
-    não divergir da usada em `calcular_totais_mes`.
+    não divergir da usada em `calcular_totais_mes`. `transferencia_caixinha`
+    não é um deles de propósito: ela realoca entre caixinhas da mesma conta,
+    sem mudar quanto a conta tem guardado (ADR-10).
     """
     total = ZERO
     for lanc in lancamentos:

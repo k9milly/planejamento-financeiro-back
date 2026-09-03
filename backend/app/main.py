@@ -21,6 +21,7 @@ from app.deps import usuario_atual
 from app.routers import (
     alertas,
     anos,
+    caixinhas,
     auth,
     categorias,
     contas,
@@ -152,6 +153,7 @@ protegido = [Depends(usuario_atual)]
 
 app.include_router(anos.router, dependencies=protegido)
 app.include_router(contas.router, dependencies=protegido)
+app.include_router(caixinhas.router, dependencies=protegido)
 app.include_router(categorias.router, dependencies=protegido)
 app.include_router(lancamentos.router, dependencies=protegido)
 app.include_router(gastos_fixos.router, dependencies=protegido)

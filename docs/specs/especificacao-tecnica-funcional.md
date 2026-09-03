@@ -842,10 +842,10 @@ um subsistema de importação completo para OFX (prévia + confirmação,
 deduplicação, sugestão de categoria) — o que muda aqui é generalizar para
 CSV/XLSX e construir a tela no frontend, que hoje não existe.
 
-**Status do backend (30/08/2026):** a generalização já está implementada e
-testada — as duas rotas abaixo respondem para os três formatos, e o caminho
-antigo (`/importacao/ofx/previa`, `.../ofx/confirmar`) responde `404`. O que
-falta deste item é só a tela.
+**Status do backend (30/08/2026):** a generalização já está implementada,
+testada e **em produção** — as duas rotas abaixo respondem para os três
+formatos, e o caminho antigo (`/importacao/ofx/previa`, `.../ofx/confirmar`)
+responde `404`. O que falta deste item é só a tela.
 
 ### Fluxo
 
@@ -937,9 +937,10 @@ idempotência de reimportar o mesmo extrato funcionarem de graça.
 + valor"): sem ele, um Pix enviado e um recebido no mesmo dia, de mesmo
 valor e mesma descrição, colidiriam e o segundo sumiria como duplicata.
 
-Como a regra não depende do formato, o **mesmo extrato baixado em CSV e em
-XLSX** gera os mesmos identificadores — importar os dois não duplica nada.
-Isso é coberto por teste no backend, não é só consequência teórica.
+**Quarta coluna, opcional: `identificador`.** O extrato em CSV do Nubank —
+conferido de verdade em 31/08 — traz um UUID por transação, que é o mesmo
+papel do `FITID`. Quando a coluna existe, o `fitid` é esse valor em vez do
+sintético, e a deduplicação fica exata. Nada muda para a tela.
 
 ### Layout aceito para CSV/XLSX
 
@@ -947,32 +948,14 @@ Três colunas, identificadas pelo nome do cabeçalho (case-insensitive,
 ordem livre): `data` (`AAAA-MM-DD` ou `DD/MM/AAAA`), `valor` (negativo =
 saída, positivo = entrada, mesma convenção do OFX), `descricao`. É um
 layout genérico da própria aplicação, não o export nativo de nenhum
-banco — se o extrato real do banco da Kamilly tiver colunas diferentes,
-é um ajuste isolado só no parser, sem afetar o resto do contrato.
+banco — se o extrato real tiver colunas diferentes, é um ajuste isolado só
+no parser, sem afetar o resto do contrato.
 
-**Confirmado contra um arquivo real (31/08/2026):** o extrato em CSV do
-Nubank passa neste layout sem nenhum ajuste — o cabeçalho dele é
-`Data,Valor,Identificador,Descrição`, e os três nomes obrigatórios casam
-(acento e maiúscula são ignorados).
-
-**Quarta coluna, opcional: `identificador`.** O Nubank traz um UUID por
-transação, que é o mesmo papel do `FITID` no OFX. Quando a coluna existe,
-o `fitid` da prévia é esse valor em vez do sintético — a deduplicação fica
-exata, e duas compras iguais no mesmo dia deixam de ser confundidas. Quando
-não existe (ou está vazia naquela linha), cai no sintético como antes. Nada
-muda para a tela: `fitid` continua sendo uma string opaca que ela devolve
-igual na confirmação.
-
-Além do mínimo acima, o parser já tolera o que um arquivo real costuma
-trazer, sem que isso mude o layout combinado: linhas de preâmbulo antes do
-cabeçalho, separador `;`, `,` ou tabulação, BOM do Excel, Latin-1, `R$` e
-separador de milhar (`-1.234,56` e `-1,234.56` são o mesmo número). Linhas
-em branco e linhas com valor zero são ignoradas.
-
-O que ele **não** faz é engolir erro em silêncio: uma data ou um valor
-ilegível interrompe a importação citando a linha. Numa planilha isso quase
-sempre significa que a coluna inteira veio num formato não previsto, e
-importar metade calado seria pior do que recusar.
+O parser tolera o que um arquivo real costuma trazer: preâmbulo antes do
+cabeçalho, separador `;`/`,`/tabulação, BOM do Excel, Latin-1, `R$` e
+separador de milhar. Linhas em branco e de valor zero são ignoradas. O que
+ele **não** faz é engolir erro em silêncio: data ou valor ilegível
+interrompe a importação citando a linha.
 
 ### Tela de importação (frontend — não existe hoje)
 
@@ -999,6 +982,195 @@ interface RegraOut {
 
 ---
 
+## 14. PWA instalável — manifest.json e ícones (ADR-09)
+
+Ver `docs/adr/ADR-09-*.md` para o raciocínio completo. Não é contrato de
+API — é só frontend: um `manifest.json` novo e um conjunto de ícones,
+para que "Adicionar à tela de início" no celular gere um ícone e um nome
+de verdade, com o app abrindo em tela cheia (`display: standalone`), em
+vez do comportamento genérico de hoje.
+
+```json
+{
+  "name": "Planejamento Financeiro",
+  "short_name": "Financeiro",
+  "description": "Controle entradas, saídas, orçamentos e metas em um painel moderno.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#6c2cba",
+  "orientation": "portrait-primary",
+  "icons": [
+    { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
+```
+
+Ícones (`public/icons/`), gerados a partir do `newicon.svg` que já é a
+identidade visual atual do projeto: `icon-192.png`, `icon-512.png`,
+`icon-maskable-512.png` (com mais espaço de respiro, para o recorte
+"maskable" do Android) e `apple-touch-icon.png` (180×180, fundo opaco).
+
+Tags novas no `<head>` (além das que já existem hoje — nenhuma muda):
+
+```html
+<link rel="manifest" href="/manifest.json">
+<meta name="theme-color" content="#6c2cba">
+<link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Financeiro">
+```
+
+Sem service worker nesta rodada (decisão do ADR-09) — o app não funciona
+offline; isso continua sendo o item 7 do backlog, tratado à parte.
+
+---
+
+## 15. Investimentos — caixinhas por conta (ADR-10)
+
+Ver `docs/adr/ADR-10-*.md` para o raciocínio completo. Tela nova
+("Investimentos"), entidade nova (`Caixinha`), e extensões pequenas em
+`Lancamento` e em `GET /metas-poupanca/ativas` (sem quebrar o contrato
+que já existe).
+
+**Status do backend (31/08/2026):** implementado e testado. O contrato abaixo
+vale como está; três detalhes que o ADR não tinha como antecipar aparecem
+marcados ao longo da seção.
+
+```ts
+interface CaixinhaOut {
+  id: number;
+  conta_id: number;
+  nome: string;
+  meta_id: number | null;
+  // Calculado pelo backend, não é campo editável: `saldo_inicial` mais o
+  // efeito dos lançamentos que apontam para a caixinha. Vem pronto.
+  saldo: string;          // Decimal como string
+  criada_em: string;      // datetime
+  ativa: boolean;
+}
+
+interface CaixinhaCriar {
+  nome: string;
+  meta_id?: number | null;
+  saldo_inicial?: string; // Decimal, default "0.00" — validado contra o
+                          // guardado ainda sem caixinha na conta
+}
+// 422 quando `saldo_inicial` passa do guardado sem caixinha. A mensagem traz
+// os dois números ("Esta conta tem R$ 200,00 guardado ainda sem caixinha, e
+// você pediu R$ 500,00") — dá para mostrar direto na tela.
+//
+// 422 também ao criar caixinha num cartão de crédito: cartão não tem reserva
+// (ADR-0002), então a caixinha nunca poderia ter dinheiro. A tela deve
+// oferecer só contas `tipo="corrente"` no seletor.
+//
+// `meta_id` precisa apontar para uma meta ATIVA; meta desativada dá 422.
+
+interface CaixinhaAtualizar {
+  nome?: string;
+  meta_id?: number | null; // enviar null explicitamente para desvincular
+}
+
+// GET/POST/PATCH/DELETE /contas/{conta_id}/caixinhas
+```
+
+Transferência direta entre duas caixinhas da mesma conta:
+
+```ts
+interface TransferenciaCaixinha {
+  caixinha_origem_id: number;
+  caixinha_destino_id: number;
+  valor: string; // Decimal, > 0, ≤ saldo da caixinha de origem
+}
+
+// POST /contas/{conta_id}/caixinhas/transferir
+// → 201, devolvendo a CaixinhaOut de DESTINO já com o saldo novo
+// → cria um Lancamento com tipo="transferencia_caixinha" (não conta
+//   como entrada/saída do período, não muda o total de guardado da conta)
+//
+// A data é hoje — o corpo não tem campo de data. Por isso o ano corrente
+// precisa existir no sistema: se não existir, 422 pedindo para criá-lo; se
+// estiver arquivado, 409.
+//
+// 422 quando o valor passa do saldo da origem (a mensagem traz o saldo), e
+// quando origem ou destino está desativada. 404 quando alguma das duas não
+// é daquela conta.
+```
+
+`LancamentoCriar`/`LancamentoOut` ganham `caixinha_id` (opcional — a
+caixinha de destino em `guardado`, de origem em `retirado`, ou em
+`rendimento`/`perda` com `destino="guardado"`) e `caixinha_destino_id`
+(só usado em `tipo="transferencia_caixinha"`, junto com `caixinha_id`
+como origem). Os dois são opcionais e não quebram nenhum lançamento ou
+integração que já existe hoje sem eles.
+
+`GET /metas-poupanca/ativas` não muda de schema — só passa a calcular
+`guardado_no_mes`/`guardado_acumulado` a partir das caixinhas vinculadas
+(`caixinha.meta_id`), quando houver alguma, em vez do total da
+conta/ano. Sem caixinha vinculada, continua exatamente como o `ADR-06`
+já define.
+
+Só as caixinhas **ativas** contam: desativar uma devolve o dinheiro dela ao
+guardado sem rótulo, e a meta volta ao cálculo do ADR-06.
+
+### Caixinha nunca fica negativa
+
+Qualquer operação que deixaria uma caixinha com saldo abaixo de zero responde
+`422`, com a mensagem dizendo qual caixinha e quanto faltaria — dá para mostrar
+direto na tela. Vale para os quatro caminhos: criar lançamento, editar, excluir
+e transferir.
+
+Duas consequências para a tela:
+
+- **Excluir um lançamento pode falhar.** Apagar o `guardado` que financiou uma
+  retirada posterior é recusado. A tela precisa tratar `422` no `DELETE` de
+  lançamento, não só nos `POST`/`PATCH`.
+- **Editar valor ou tipo pode falhar pelo mesmo motivo**, mesmo sem tocar em
+  `caixinha_id`.
+
+Esvaziar até exatamente zero é permitido — a regra é sobre ficar negativa.
+
+### Conta com caixinhas exige escolher uma
+
+Assim que a conta tem **pelo menos uma caixinha ativa**, todo lançamento que
+mexe na reserva dela precisa mandar `caixinha_id`: `guardado`, `retirado`, e
+`rendimento`/`perda` com `destino="guardado"`. Sem ele, `422` — e a mensagem
+lista os nomes das caixinhas disponíveis, para a tela poder mostrar as opções.
+
+`entrada`, `saida` e transferência entre contas não são afetadas.
+
+Para a tela isso significa que o seletor "Caixinha", quando a conta escolhida
+tiver caixinhas, **não é opcional** naqueles tipos — vira campo obrigatório.
+Numa conta sem caixinha nenhuma o seletor não aparece e nada muda.
+
+A mesma regra vale na confirmação da importação, que por isso aceita
+`caixinha_id` em cada `TransacaoConfirmar`.
+
+### Guardado sem caixinha — a tela calcula, não tem endpoint
+
+A diferença entre o guardado da conta e a soma das caixinhas dela não tem rota
+própria: é `por_conta[].guardado` de `GET /anos/{ano}/resumo` menos a soma dos
+`saldo` de `GET /contas/{id}/caixinhas`, casando pelo `conta_id`. Mesmo padrão
+da seção 8, onde o saldo da conta também vem do resumo e não de `GET /contas`.
+
+Numa conta já organizada esse número tende a **zero** — todo guardado tem
+caixinha. Ele só é maior que zero enquanto houver dinheiro lançado antes de as
+caixinhas existirem, e é justamente esse saldo que `saldo_inicial` consome ao
+criar uma caixinha nova.
+
+### Desativar uma caixinha
+
+`DELETE` é soft-delete, como em metas e categorias: a caixinha some da lista
+(`incluir_inativas=true` a traz de volta) e o saldo dela volta a ser guardado
+sem rótulo da conta. Nenhum lançamento é apagado, e o `GET /anos/{ano}/resumo`
+não muda — o dinheiro nunca saiu da conta.
+
+---
+
 ## Resumo — todos os endpoints usados por esta integração
 
 | Método | Rota | Usado por |
@@ -1015,14 +1187,15 @@ interface RegraOut {
 | `PATCH` | `/auth/eu` | Perfil → nome, preferência de alerta por e-mail (seção 12, ADR-06) |
 | `GET`/`POST`/`DELETE` | `/metas-poupanca`, `GET /metas-poupanca/ativas` | Perfil e `/metas` → meta de poupança real (seção 12, ADR-06) |
 | `GET` | `/alertas` | Painel de alertas de vencimento (seção 12, ADR-06) |
-| `POST` | `/anos/{ano}/importacao/previa`, `/anos/{ano}/importacao/confirmar` | Tela de importação de extrato — CSV/XLSX/OFX (seção 13, ADR-08). Já implementado para os três formatos; o caminho antigo `/ofx/previa`/`/ofx/confirmar` foi renomeado e responde `404` |
+| `POST` | `/anos/{ano}/importacao/previa`, `/anos/{ano}/importacao/confirmar` | Tela de importação de extrato — CSV/XLSX/OFX (seção 13, ADR-08). Já implementado para os três formatos e em produção; o caminho antigo `/ofx/...` responde `404` |
 | `GET`/`POST`/`DELETE` | `/regras` | Sugestão automática de categoria na importação (seção 13) — já existe, não tinha entrado nesta tabela antes por não ser consumido por nenhuma tela até agora |
+| `GET`/`POST`/`PATCH`/`DELETE` | `/contas/{conta_id}/caixinhas`, `POST .../transferir` | Tela nova de Investimentos (seção 15, ADR-10) |
 
 Todos os endpoints das seções 1–11 já existiam e foram conferidos linha a
 linha contra o código real do backend — nenhum precisou ser criado para
 aquela rodada. Os da seção 12 são o domínio novo decidido pelo ADR-06:
 nome, meta de poupança e alertas de vencimento. Os da seção 13
-(importação) já existiam para OFX e foram generalizados para CSV/XLSX pelo
-ADR-08 — falta só a tela, que é nova no frontend. `budgets` (orçamento por categoria, dentro
+(importação) já existem para OFX — o ADR-08 generaliza para CSV/XLSX; a
+tela em si é nova no frontend. `budgets` (orçamento por categoria, dentro
 da tela `/metas`) continua fora de escopo, sem endpoint — ver seção 7 e o
 `ADR-0007` do repositório back.
