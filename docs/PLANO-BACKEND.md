@@ -350,7 +350,7 @@ total da conta); uma meta com caixinha vinculada reflete o saldo dela em
 /metas-poupanca/ativas` sem caixinha vinculada continuam passando sem
 alteração.
 
-**Feito em 31/08/2026.** Duas coisas saíram diferentes do que o ADR-10
+**Feito em 03/09/2026.** Duas coisas saíram diferentes do que o ADR-10
 descreve, e valem revisão:
 
 - **Não existe coluna `saldo` na caixinha.** O ADR a lista como campo; ela é
@@ -415,12 +415,64 @@ Uma conta sem caixinha nenhuma continua exatamente como antes: não há o que
 escolher. É isso que permite lançar o guardado primeiro e organizar em
 caixinhas depois, com `saldo_inicial` — o caminho da migração da Kamilly.
 
+## Fase 8 — Orçamento por categoria: limite real (ADR-11)
+
+**O quê:** reverte o `ADR-0007` deste repositório — ler o `ADR-11` antes
+de codificar, ele explica o porquê (a Kamilly pediu depois de usar a
+tela). Ver seção 16 da Parte 1 para o contrato completo.
+
+- Migração pequena: `Categoria.limite_mensal` (Decimal, nullable) e
+  `Usuario.mostrar_orcamento_categoria` (boolean, default `true`).
+- `POST /categorias`, `PATCH /categorias/{id}` e `GET /categorias`
+  passam a aceitar/devolver `limite_mensal` — endpoints já existem, só
+  ganham um campo.
+- `PATCH /auth/eu` (já existe, do ADR-06) ganha
+  `mostrar_orcamento_categoria`.
+- Nenhuma mudança na agregação de gasto por categoria — `ResumoMesOut.
+  gastos_por_categoria` já existe e já está correta; o cálculo de %
+  contra o limite é feito no frontend.
+
+**Critério de aceite:** criar uma categoria com `limite_mensal="600.00"`,
+depois editar para `null`, remove o limite sem apagar a categoria nem
+seus lançamentos históricos. `mostrar_orcamento_categoria` tem default
+`true` para usuários existentes (não precisa de migração de dados, só de
+schema).
+
+**Feito em 05/09/2026.** Saiu como o ADR-11 pede: dois campos, nenhum
+endpoint novo, nenhuma mudança na agregação de gasto por categoria.
+
+Duas decisões pequenas que o ADR não especificava:
+
+- **`limite_mensal` precisa ser maior que zero** (`422` se for `0` ou
+  negativo), com `CHECK` no banco também. Um teto de zero não quer dizer
+  nada — quem não tem orçamento usa `null`, que é o padrão e continua sendo
+  uma categoria de uso normal.
+- **O `CHECK` trata `NULL` explicitamente** (`limite_mensal IS NULL OR
+  limite_mensal > 0`). Em SQL `NULL > 0` é desconhecido, não falso, e uma
+  restrição desconhecida passa — mas escrever a intenção evita que alguém
+  "simplifique" depois achando que dá no mesmo em todo dialeto.
+
+**O que fez a diferença entre ausente e nulo funcionar** já estava lá: o
+`PATCH /categorias/{id}` usa `model_dump(exclude_unset=True)`. Sem isso,
+editar só a cor apagaria o limite junto. Há teste cobrindo os dois casos, e
+confirmei que ele falha se o `exclude_unset` sair.
+
+**Um teste antigo precisou ser atualizado, e é bom que tenha precisado:**
+`test_eu_traz_os_campos_novos` trava o conjunto exato de campos de
+`GET /auth/eu`. Ele quebrou ao ganhar `mostrar_orcamento_categoria` —
+exatamente o que ele existe para fazer, já que essa é a resposta que o
+frontend lê na abertura. Atualizei o conjunto em vez de afrouxar a asserção.
+
+**Nada a fazer sobre dados existentes:** `limite_mensal` nasce nulo e
+`mostrar_orcamento_categoria` nasce `true` pelo `server_default`, inclusive
+para as linhas que já estão no banco.
+
 ## Fora desta rodada (decisões já registradas nas Partes 1 e 2, não tarefas)
 
-- Nenhum endpoint de orçamento/meta por categoria (`budgets`, dentro da tela
-  `/metas`) — já decidido fora de escopo pelo ADR-0007 deste mesmo
-  repositório, ver seção 7 da Parte 1. Diferente de meta de poupança
-  (`goals`), que passou a ser real na Fase 4 acima.
+- ~~Nenhum endpoint de orçamento/meta por categoria~~ — **revertido pelo
+  ADR-11 na Fase 8 acima.** O limite por categoria virou
+  `Categoria.limite_mensal`, real e editável. Meta de poupança (`goals`) já
+  tinha virado real na Fase 4.
 - Alertas de progresso de meta de poupança ou de saldo baixo — fora de
   escopo por enquanto (ADR-06); só entram se virarem uma decisão de produto
   explícita depois.
