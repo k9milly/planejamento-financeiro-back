@@ -34,10 +34,20 @@ def dia_daqui(dias: int) -> int:
 class TestPerfil:
     def test_eu_traz_os_campos_novos(self, cliente):
         corpo = cliente.get("/auth/eu").json()
-        assert set(corpo) == {"id", "email", "nome", "alertas_email_ativo"}
+        # O conjunto é travado de propósito: `/auth/eu` é o que o frontend lê
+        # na abertura, e um campo entrando ou saindo sem querer passaria
+        # despercebido. `mostrar_orcamento_categoria` entrou no ADR-11.
+        assert set(corpo) == {
+            "id",
+            "email",
+            "nome",
+            "alertas_email_ativo",
+            "mostrar_orcamento_categoria",
+        }
         # Quem nunca preencheu continua sendo identificado pelo e-mail.
         assert corpo["nome"] is None
         assert corpo["alertas_email_ativo"] is False
+        assert corpo["mostrar_orcamento_categoria"] is True
 
     def test_edita_o_proprio_nome(self, cliente):
         resposta = cliente.patch("/auth/eu", json={"nome": "Kamilly"})

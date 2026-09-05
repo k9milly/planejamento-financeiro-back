@@ -196,6 +196,19 @@ class Usuario(Base):
         Boolean, nullable=False, default=False, server_default=false()
     )
 
+    # Se a seção de orçamento por categoria aparece na tela (ADR-11). Nasce
+    # ligada: quem cadastrou um limite quer vê-lo, e quem não cadastrou não vê
+    # seção nenhuma de qualquer forma — a lista sai vazia.
+    #
+    # Desligar não apaga nenhum `Categoria.limite_mensal`: é só uma preferência
+    # de exibição. Fica no banco, e não no `localStorage`, porque a usuária
+    # abre o app instalado num aparelho e pelo navegador em outro — a
+    # preferência segue a conta, não o dispositivo (mesmo motivo de
+    # `alertas_email_ativo`).
+    mostrar_orcamento_categoria: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default=true()
+    )
+
     # Como o usuário arrumou os blocos do painel. Texto opaco de propósito: é
     # JSON gerado e lido só pelo frontend, e o backend não tem nada a decidir
     # sobre o conteúdo — validar o formato aqui obrigaria a mudar o backend
@@ -282,11 +295,33 @@ class Categoria(Base):
     por categoria possam ser comparados entre anos."""
 
     __tablename__ = "categorias"
+    __table_args__ = (
+        CheckConstraint(
+            "limite_mensal IS NULL OR limite_mensal > 0",
+            name="ck_categoria_limite_positivo",
+        ),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     nome: Mapped[str] = mapped_column(String(60), unique=True, nullable=False)
     cor: Mapped[str] = mapped_column(String(7), nullable=False, default="#94a3b8")
     ativa: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+
+    # Quanto se pretende gastar nesta categoria por mês (ADR-11). Recorrente:
+    # o mesmo valor todo mês, sem variar mês a mês nesta primeira versão.
+    #
+    # `None` é o normal, não uma pendência — a maioria das categorias não tem
+    # orçamento, e continua sendo categoria de uso comum. Editar o limite vale
+    # a partir da edição: o mês corrente recalcula a porcentagem na hora, sem
+    # reescrever histórico, porque o número guardado é a intenção e não o
+    # resultado.
+    #
+    # Isto reverte o ADR-0007, que decidira rastrear só o que de fato
+    # aconteceu. O gasto real por categoria não muda em nada — já vinha de
+    # `gastos_por_categoria`; o que passou a existir é o outro lado da conta.
+    limite_mensal: Mapped[float | None] = mapped_column(
+        Numeric(12, 2), nullable=True
+    )
 
     lancamentos: Mapped[list["Lancamento"]] = relationship(back_populates="categoria")
 

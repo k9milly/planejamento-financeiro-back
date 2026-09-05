@@ -38,6 +38,8 @@ class UsuarioOut(BaseModel):
     # `None` = nunca preencheu; a interface cai no e-mail nesse caso (ADR-06).
     nome: str | None
     alertas_email_ativo: bool
+    # Se a tela mostra a seção de orçamento por categoria (ADR-11).
+    mostrar_orcamento_categoria: bool
 
 
 class UsuarioAtualizar(BaseModel):
@@ -47,6 +49,7 @@ class UsuarioAtualizar(BaseModel):
 
     nome: str | None = Field(default=None, max_length=120)
     alertas_email_ativo: bool | None = None
+    mostrar_orcamento_categoria: bool | None = None
 
 
 @router.post("/login", response_model=TokenOut, summary="Entra no sistema")
