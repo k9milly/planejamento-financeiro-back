@@ -611,10 +611,14 @@ class Caixinha(Base):
         ForeignKey("metas_poupanca.id", ondelete="SET NULL"), nullable=True, index=True
     )
 
-    # Quanto já estava guardado nesta caixinha quando ela foi criada. Existe
-    # para dar nome, retroativamente, a dinheiro que já foi lançado sem
-    # caixinha — sem isso seria preciso inventar um lançamento de "guardado"
-    # que somaria de novo um dinheiro que a conta já tem.
+    # Quanto desta caixinha vem de dinheiro que já estava guardado antes de
+    # ela existir. Serve para dar nome, retroativamente, ao que foi lançado
+    # sem caixinha — sem isso seria preciso inventar um lançamento de
+    # "guardado" que somaria de novo um dinheiro que a conta já tem.
+    #
+    # Editável depois da criação: não é histórico, é rótulo. Mudá-lo não mexe
+    # em lançamento nenhum, e as mesmas validações da criação valem na edição
+    # (não passar do guardado sem caixinha, não deixar a caixinha negativa).
     saldo_inicial: Mapped[float] = mapped_column(
         Numeric(12, 2), nullable=False, default=0, server_default="0"
     )
