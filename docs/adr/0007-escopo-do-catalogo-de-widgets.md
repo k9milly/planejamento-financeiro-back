@@ -1,6 +1,17 @@
 # ADR-0007 — O catálogo de widgets v1 usa só dados que já existem; orçamento/meta, dívidas e investimentos como entidades próprias ficam de fora
 
-**Status:** proposto
+**Status:** proposto — **parcialmente revertido pelo ADR-11** (05/09/2026)
+
+> A parte de **orçamento por categoria** desta decisão não vale mais. Depois
+> de usar a tela, a Kamilly pediu que o limite por categoria fosse real e
+> editável; ele virou `Categoria.limite_mensal` (ver `ADR-11`). O raciocínio
+> abaixo não estava errado — era uma decisão legítima sobre que informação o
+> sistema rastreia —, mudou o que ela quer rastrear.
+>
+> O resto continua valendo: **dívidas** e **investimentos** como entidades
+> próprias seguem fora de escopo. "Investimentos" ganhou um recorte diferente
+> e menor no `ADR-10` (caixinhas nomeando o `guardado` de uma conta), que não
+> é a lista com aporte e rendimento por linha discutida aqui.
 
 ## Contexto
 

@@ -114,12 +114,23 @@ class SaldoInicialOut(_Base):
 class CategoriaCriar(BaseModel):
     nome: str = Field(min_length=1, max_length=60)
     cor: str = Field(default="#94a3b8", pattern=r"^#[0-9a-fA-F]{6}$")
+    # Quanto se pretende gastar por mês nesta categoria (ADR-11). Ausente ou
+    # nulo = categoria sem orçamento, que é o normal.
+    limite_mensal: Decimal | None = Field(
+        default=None, gt=0, max_digits=12, decimal_places=2
+    )
 
 
 class CategoriaAtualizar(BaseModel):
     nome: str | None = Field(default=None, min_length=1, max_length=60)
     cor: str | None = Field(default=None, pattern=r"^#[0-9a-fA-F]{6}$")
     ativa: bool | None = None
+    # `null` explícito remove o limite; campo ausente não mexe nele. O router
+    # usa `exclude_unset`, que é o que faz os dois significarem coisas
+    # diferentes.
+    limite_mensal: Decimal | None = Field(
+        default=None, gt=0, max_digits=12, decimal_places=2
+    )
 
 
 class CategoriaOut(_Base):
@@ -127,6 +138,7 @@ class CategoriaOut(_Base):
     nome: str
     cor: str
     ativa: bool
+    limite_mensal: Decimal | None
 
 
 # --------------------------------------------------------------------------- #

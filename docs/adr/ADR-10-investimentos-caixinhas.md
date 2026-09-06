@@ -155,7 +155,7 @@ lançamento (já existente) ganha um segundo seletor, condicional: depois
 de escolher a conta, se ela tiver caixinhas ativas, aparece "Caixinha
 (opcional)" listando as caixinhas daquela conta.
 
-## Adendo de implementação (31/08/2026) — saldo nunca negativo
+## Adendo de implementação (03/09/2026) — saldo nunca negativo
 
 O ADR pede validação de saldo na transferência e no `saldo_inicial`. Ao
 implementar, três outros caminhos levavam a uma caixinha negativa, e todos
@@ -168,7 +168,7 @@ cobre só o primeiro caso. A trava passou a olhar o **resultado**, com a mudanç
 já aplicada na sessão e antes do commit, e vale para todo caminho que mexe em
 caixinha.
 
-## Adendo de implementação (31/08/2026) — não existe dinheiro solto
+## Adendo de implementação (03/09/2026) — não existe dinheiro solto
 
 Um segundo caso apareceu: a soma das caixinhas passava do guardado da conta
 quando uma retirada **sem caixinha** levava dinheiro que estava rotulado.
