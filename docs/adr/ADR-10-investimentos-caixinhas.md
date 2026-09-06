@@ -189,6 +189,43 @@ criam lançamento — o cadastro/edição e a confirmação da importação, que
 `caixinha_id` em `TransacaoConfirmar`. Conta sem caixinha nenhuma continua como
 sempre foi.
 
+## Adendo de implementação (05/09/2026) — `saldo_inicial` é editável
+
+A primeira implementação bloqueava a edição de `saldo_inicial`, com o
+argumento de que mudá-lo "reescreveria o passado da caixinha". O argumento não
+se sustenta: nenhum lançamento muda, e o campo não é histórico — é o rótulo
+que se dá a dinheiro que já estava guardado sem caixinha.
+
+O que a restrição produziu foi uma armadilha, e a Kamilly caiu nela no
+primeiro uso real: criou a caixinha com o campo em branco (é fácil, ele não se
+explica sozinho) e perdeu o único momento de rotular os R$ 13.033,33 que já
+estavam guardados. A saída teria sido apagar a caixinha e criar outra.
+
+`PATCH /contas/{id}/caixinhas/{id}` passa a aceitar `saldo_inicial`, com as
+mesmas duas validações da criação. O teto na edição soma o que a **própria**
+caixinha já reivindicava — sem isso, subir de 100 para 120 seria recusado
+por causa dos 100 que ela mesma ocupava. `null` é recusado com mensagem:
+para zerar, manda-se `0`.
+
+## Adendo de implementação (05/09/2026) — o dia de hoje é o de quem usa
+
+Bug pré-existente, encontrado por dois testes que começaram a falhar às 21h e
+voltariam a passar sozinhos no dia seguinte.
+
+O servidor roda em UTC e o banco grava `criada_em` em UTC; `Lancamento.data` é
+a data do calendário de quem lançou, no fuso dela. Entre 21h e meia-noite no
+Brasil as duas discordam em um dia. `_progresso_prazo` comparava
+`Lancamento.data >= meta.criada_em.date()` — então **uma meta com prazo criada
+depois das 21h ignorava tudo o que fora guardado naquele mesmo dia**, e o
+progresso "voltava" sozinho na virada.
+
+Agora todo lugar que pergunta "que dia é hoje" passa por
+`app/services/tempo.py`, que responde no fuso de São Paulo; nenhum usa
+`date.today()` direto. Isso corrige junto três outros pontos que tinham o
+mesmo defeito latente: a janela de 3 dias dos alertas, a data do lançamento
+criado por uma transferência entre caixinhas, e qual ano é "o ano corrente"
+ao validar `saldo_inicial`.
+
 ## Consequências
 
 - Migração nova: tabela `caixinhas`; `Lancamento` ganha `caixinha_id` e

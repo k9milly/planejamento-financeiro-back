@@ -7,12 +7,18 @@ from datetime import date
 
 import pytest
 
+# Os testes precisam do mesmo "hoje" que a aplicação usa: o do fuso de São
+# Paulo, não o do relógio da máquina. O CI roda em UTC, então entre 21h e
+# meia-noite no Brasil os dois discordam em um dia — e uma suíte que usasse
+# `date.today()` falharia só nesse intervalo (ver `app/services/tempo.py`).
+from app.services.tempo import hoje as data_de_hoje
+
 
 @pytest.fixture()
 def ano_corrente(cliente, conta):
     """O ano de hoje. Metas e alertas olham para o presente, não para 2026
     fixo — usar um ano fixo faria os testes quebrarem na virada."""
-    resposta = cliente.post("/anos", json={"ano": date.today().year})
+    resposta = cliente.post("/anos", json={"ano": data_de_hoje().year})
     assert resposta.status_code in (200, 201), resposta.text
     return resposta.json()
 
@@ -24,7 +30,7 @@ def dia_daqui(dias: int) -> int:
     seguinte mediria outra coisa — os que usam isto são pulados perto da
     virada em vez de falharem por motivo errado.
     """
-    hoje = date.today()
+    hoje = data_de_hoje()
     alvo = hoje.day + dias
     if alvo > calendar.monthrange(hoje.year, hoje.month)[1]:
         pytest.skip("perto da virada do mês: o vencimento cairia no mês seguinte")
@@ -119,7 +125,7 @@ class TestMetasPoupanca:
     def test_progresso_vem_do_guardado_real(self, cliente, ano_corrente, conta):
         """O percentual tem de bater com o `guardado` que o resumo do ano
         mostra — é a mesma fonte, e não um segundo cálculo paralelo."""
-        hoje = date.today()
+        hoje = data_de_hoje()
         cliente.post(
             f"/anos/{hoje.year}/lancamentos",
             json={
@@ -147,7 +153,7 @@ class TestMetasPoupanca:
         guardados e decide juntar R$ 6 mil veria a meta concluída antes de
         guardar o primeiro real.
         """
-        hoje = date.today()
+        hoje = data_de_hoje()
         cliente.post(
             f"/anos/{hoje.year}/lancamentos",
             json={
@@ -170,7 +176,7 @@ class TestMetasPoupanca:
             assert prazo["percentual"] == 0.0
 
     def test_meta_com_prazo_soma_o_que_veio_depois(self, cliente, ano_corrente, conta):
-        hoje = date.today()
+        hoje = data_de_hoje()
         cliente.post(
             "/metas-poupanca",
             json={"tipo": "prazo", "valor_alvo": "1000", "data_alvo": "2030-12-31"},
@@ -193,7 +199,7 @@ class TestMetasPoupanca:
         self, cliente, ano_corrente, conta
     ):
         """Tirar da reserva anda para trás na meta — não é ignorado."""
-        hoje = date.today()
+        hoje = data_de_hoje()
         cliente.post(
             "/metas-poupanca",
             json={"tipo": "prazo", "valor_alvo": "1000", "data_alvo": "2030-12-31"},
@@ -218,7 +224,7 @@ class TestMetasPoupanca:
 
     def test_progresso_passa_de_cem_por_cento(self, cliente, ano_corrente, conta):
         """Guardar mais que o alvo é informação, não erro — não trunca em 100."""
-        hoje = date.today()
+        hoje = data_de_hoje()
         cliente.post(
             f"/anos/{hoje.year}/lancamentos",
             json={
@@ -243,7 +249,7 @@ class TestAlertas:
     def test_gasto_fixo_perto_de_vencer_aparece(self, cliente, ano_corrente, conta):
         dia = dia_daqui(2)
         cliente.post(
-            f"/anos/{date.today().year}/gastos-fixos",
+            f"/anos/{data_de_hoje().year}/gastos-fixos",
             json={
                 "descricao": "Internet",
                 "valor": "54.17",
@@ -263,7 +269,7 @@ class TestAlertas:
         }
 
     def test_gasto_fixo_pago_nao_aparece(self, cliente, ano_corrente, conta):
-        hoje = date.today()
+        hoje = data_de_hoje()
         gasto = cliente.post(
             f"/anos/{hoje.year}/gastos-fixos",
             json={
@@ -286,7 +292,7 @@ class TestAlertas:
         fica de fora). Sem isso, o teste seria pulado perto da virada,
         justamente quando essa borda mais importa.
         """
-        hoje = date.today()
+        hoje = data_de_hoje()
         ultimo = calendar.monthrange(hoje.year, hoje.month)[1]
         distante = hoje.day + 10
         dia = distante if distante <= ultimo else 1
@@ -305,7 +311,7 @@ class TestAlertas:
         assert cliente.get("/alertas").json() == []
 
     def test_fatura_de_cartao_tambem_alerta(self, cliente, ano_corrente):
-        hoje = date.today()
+        hoje = data_de_hoje()
         dia = dia_daqui(1)
         cartao = cliente.post(
             "/contas",
@@ -345,7 +351,7 @@ class TestAlertas:
         self, cliente, ano_corrente
     ):
         """Os dois números saem do mesmo cálculo — não podem divergir."""
-        hoje = date.today()
+        hoje = data_de_hoje()
         cartao = cliente.post(
             "/contas",
             json={
@@ -394,7 +400,7 @@ class TestAlertas:
         e ficar sem cobertura de ordenação justamente na virada é o pior
         momento para não ter.
         """
-        hoje = date.today()
+        hoje = data_de_hoje()
         ultimo = calendar.monthrange(hoje.year, hoje.month)[1]
         # Janela do alerta é 0..3 dias; sobra o que couber até o fim do mês.
         offsets = [d for d in range(4) if hoje.day + d <= ultimo]
@@ -424,7 +430,7 @@ class TestAlertas:
         nome lê de campos distintos — misturar os dois é o caso que quebraria
         se alguém assumisse um formato único.
         """
-        ano = date.today().year
+        ano = data_de_hoje().year
         cliente.post(
             f"/anos/{ano}/gastos-fixos",
             json={
@@ -446,7 +452,7 @@ class TestAlertas:
         cliente.post(
             f"/anos/{ano}/lancamentos",
             json={
-                "data": date.today().isoformat(),
+                "data": data_de_hoje().isoformat(),
                 "valor": "80.00",
                 "tipo": "saida",
                 "conta_id": cartao["id"],

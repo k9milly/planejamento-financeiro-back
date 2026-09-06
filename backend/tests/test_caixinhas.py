@@ -15,7 +15,13 @@ from decimal import Decimal
 
 import pytest
 
-HOJE = date.today()
+# Os testes precisam do mesmo "hoje" que a aplicação usa: o do fuso de São
+# Paulo, não o do relógio da máquina. O CI roda em UTC, então entre 21h e
+# meia-noite no Brasil os dois discordam em um dia — e uma suíte que usasse
+# `date.today()` falharia só nesse intervalo (ver `app/services/tempo.py`).
+from app.services.tempo import hoje
+
+HOJE = hoje()
 ANO = HOJE.year
 
 
@@ -123,17 +129,118 @@ class TestSaldoInicial:
             cliente, conta, "Reserva", saldo_inicial="-10.00"
         ).status_code == 422
 
-    def test_nao_e_editavel_depois(self, cliente, ano, conta):
-        """Mudar o saldo inicial reescreveria o passado sem lançamento nenhum."""
+    def test_e_editavel_depois(self, cliente, ano, conta):
+        """A primeira versão bloqueava isto, e a Kamilly caiu na armadilha.
+
+        Ela criou a caixinha com o campo em branco e perdeu o único momento de
+        rotular os R$ 13 mil que já estavam guardados. Editar não reescreve
+        passado nenhum: nenhum lançamento muda, só o rótulo.
+        """
         guardar(cliente, conta, "1000.00")
         caixinha = criar_caixinha(cliente, conta, "Reserva", saldo_inicial="100.00").json()
 
-        cliente.patch(
+        atualizada = cliente.patch(
             f"/contas/{conta['id']}/caixinhas/{caixinha['id']}",
             json={"saldo_inicial": "900.00"},
         )
+        assert atualizada.status_code == 200
+        assert atualizada.json()["saldo"] == "900.00"
+
+    def test_o_caso_da_caixinha_criada_zerada(self, cliente, ano, conta):
+        """Exatamente o que aconteceu em produção: criada com 0, corrigida depois."""
+        guardar(cliente, conta, "13033.33")
+        caixinha = criar_caixinha(cliente, conta, "Kamy e Gui").json()
+        assert caixinha["saldo"] == "0.00"
+
+        corrigida = cliente.patch(
+            f"/contas/{conta['id']}/caixinhas/{caixinha['id']}",
+            json={"saldo_inicial": "13033.33"},
+        ).json()
+        assert corrigida["saldo"] == "13033.33"
+
+        # E o guardado sem caixinha zerou: não sobrou dinheiro sem rótulo.
+        assert criar_caixinha(
+            cliente, conta, "Outra", saldo_inicial="0.01"
+        ).status_code == 422
+
+    def test_o_teto_da_edicao_considera_o_que_a_propria_ja_tinha(
+        self, cliente, ano, conta
+    ):
+        """Sem somar a parte dela, subir de 100 para 120 seria recusado à toa."""
+        guardar(cliente, conta, "1000.00")
+        caixinha = criar_caixinha(cliente, conta, "Reserva", saldo_inicial="100.00").json()
+
+        subiu = cliente.patch(
+            f"/contas/{conta['id']}/caixinhas/{caixinha['id']}",
+            json={"saldo_inicial": "120.00"},
+        )
+        assert subiu.status_code == 200
+        assert subiu.json()["saldo"] == "120.00"
+
+    def test_a_edicao_nao_inventa_dinheiro(self, cliente, ano, conta):
+        guardar(cliente, conta, "1000.00")
+        caixinha = criar_caixinha(cliente, conta, "Reserva", saldo_inicial="100.00").json()
+
+        estourou = cliente.patch(
+            f"/contas/{conta['id']}/caixinhas/{caixinha['id']}",
+            json={"saldo_inicial": "5000.00"},
+        )
+        assert estourou.status_code == 422
+        assert "1000,00" in estourou.json()["detail"]
+
+    def test_a_edicao_respeita_as_outras_caixinhas(self, cliente, ano, conta):
+        guardar(cliente, conta, "1000.00")
+        primeira = criar_caixinha(cliente, conta, "Reserva", saldo_inicial="100.00").json()
+        criar_caixinha(cliente, conta, "Viagem", saldo_inicial="800.00")
+
+        # Sobram 100 sem rótulo, mais os 100 que esta já tinha = teto de 200.
+        assert cliente.patch(
+            f"/contas/{conta['id']}/caixinhas/{primeira['id']}",
+            json={"saldo_inicial": "200.00"},
+        ).status_code == 200
+
+        assert cliente.patch(
+            f"/contas/{conta['id']}/caixinhas/{primeira['id']}",
+            json={"saldo_inicial": "250.00"},
+        ).status_code == 422
+
+    def test_baixar_demais_nao_deixa_a_caixinha_negativa(self, cliente, ano, conta):
+        """Se lançamentos já tiraram dinheiro dela, o piso não é zero."""
+        guardar(cliente, conta, "1000.00")
+        caixinha = criar_caixinha(cliente, conta, "Reserva", saldo_inicial="500.00").json()
+        guardar(cliente, conta, "400.00", caixinha["id"], tipo="retirado")
+
+        # Saldo atual: 500 - 400 = 100. Baixar o inicial para 50 daria -350.
+        recusado = cliente.patch(
+            f"/contas/{conta['id']}/caixinhas/{caixinha['id']}",
+            json={"saldo_inicial": "50.00"},
+        )
+        assert recusado.status_code == 422
+        assert "negativa" in recusado.json()["detail"]
+
         atual = cliente.get(f"/contas/{conta['id']}/caixinhas").json()[0]
         assert atual["saldo"] == "100.00"
+
+    def test_zerar_manda_zero_e_nao_nulo(self, cliente, ano, conta):
+        guardar(cliente, conta, "1000.00")
+        caixinha = criar_caixinha(cliente, conta, "Reserva", saldo_inicial="100.00").json()
+        rota = f"/contas/{conta['id']}/caixinhas/{caixinha['id']}"
+
+        recusado = cliente.patch(rota, json={"saldo_inicial": None})
+        assert recusado.status_code == 422
+        assert "`0`" in recusado.json()["detail"]
+
+        assert cliente.patch(rota, json={"saldo_inicial": "0"}).json()["saldo"] == "0.00"
+
+    def test_patch_sem_o_campo_nao_mexe_no_saldo(self, cliente, ano, conta):
+        guardar(cliente, conta, "1000.00")
+        caixinha = criar_caixinha(cliente, conta, "Reserva", saldo_inicial="100.00").json()
+
+        renomeada = cliente.patch(
+            f"/contas/{conta['id']}/caixinhas/{caixinha['id']}", json={"nome": "Outro"}
+        ).json()
+        assert renomeada["nome"] == "Outro"
+        assert renomeada["saldo"] == "100.00"
 
 
 class TestLancamentoComCaixinha:
@@ -833,3 +940,80 @@ class TestTodoGuardadoTemCaixinha:
         )
         assert resposta.status_code == 422
         assert "negativa" in resposta.json()["detail"]
+
+
+class TestFusoHorario:
+    """O dia de hoje é o de quem usa, não o do servidor.
+
+    O servidor roda em UTC e o banco grava `criada_em` em UTC; a data de um
+    lançamento é a do calendário de quem lançou. Entre 21h e meia-noite no
+    Brasil as duas discordam, e uma meta com prazo criada nesse intervalo
+    passava a ignorar tudo o que fora guardado naquele mesmo dia.
+
+    Os testes abaixo não dependem do relógio: passam a qualquer hora.
+    """
+
+    def test_o_dia_e_o_do_brasil(self):
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+
+        from app.services.tempo import hoje
+
+        assert hoje() == datetime.now(ZoneInfo("America/Sao_Paulo")).date()
+
+    def test_timestamp_utc_de_madrugada_vira_o_dia_anterior(self):
+        """01h de 06/09 em UTC é 22h de 05/09 no Brasil — e é o 05 que conta."""
+        from datetime import datetime
+
+        from app.services.tempo import data_local
+
+        assert data_local(datetime(2026, 9, 6, 1, 3)) == date(2026, 9, 5)
+
+    def test_timestamp_de_dia_nao_muda(self):
+        from datetime import datetime
+
+        from app.services.tempo import data_local
+
+        assert data_local(datetime(2026, 9, 5, 15, 0)) == date(2026, 9, 5)
+
+    def test_meta_criada_de_noite_conta_o_que_foi_guardado_no_dia(
+        self, cliente, ano, conta, sessao_teste
+    ):
+        """A regressão de verdade, reproduzida sem depender da hora do relógio.
+
+        Cuidado que já me pegou uma vez: a caixinha **não** pode estar
+        vinculada à meta. Com vínculo, o progresso vem do saldo da caixinha e
+        o `criada_em` nem é consultado — o teste passaria mesmo com o bug.
+        """
+        from datetime import datetime, timedelta
+
+        from app.models import MetaPoupanca
+
+        meta = cliente.post(
+            "/metas-poupanca",
+            json={
+                "tipo": "prazo",
+                "valor_alvo": "1000.00",
+                "data_alvo": date(ANO, 12, 31).isoformat(),
+            },
+        ).json()
+
+        # Caixinha sem vínculo com a meta: a conta exige uma para guardar, mas
+        # o progresso da meta continua vindo dos lançamentos.
+        caixinha = criar_caixinha(cliente, conta, "Reserva").json()
+        guardar(cliente, conta, "300.00", caixinha["id"])
+
+        # Empurra `criada_em` para 01h UTC do dia seguinte — exatamente o que o
+        # banco teria gravado se a meta fosse criada às 22h no Brasil.
+        db = sessao_teste()
+        try:
+            registro = db.get(MetaPoupanca, meta["id"])
+            registro.criada_em = datetime.combine(
+                HOJE + timedelta(days=1), datetime.min.time()
+            ).replace(hour=1)
+            db.commit()
+        finally:
+            db.close()
+
+        prazo = cliente.get("/metas-poupanca/ativas").json()["prazo"]
+        assert prazo["guardado_acumulado"] == "300.00"

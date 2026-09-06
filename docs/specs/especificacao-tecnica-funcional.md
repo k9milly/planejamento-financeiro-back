@@ -1080,8 +1080,16 @@ interface CaixinhaCriar {
 
 interface CaixinhaAtualizar {
   nome?: string;
-  meta_id?: number | null; // enviar null explicitamente para desvincular
+  meta_id?: number | null;   // enviar null explicitamente para desvincular
+  saldo_inicial?: string;    // Decimal; `null` é recusado — para zerar, "0"
 }
+// `saldo_inicial` é editável depois da criação (mudou em 05/09/2026 — a
+// primeira versão só aceitava na criação, e quem esquecia de preencher
+// perdia o único momento de rotular o dinheiro que já estava guardado).
+//
+// Mesmo teto da criação, mais o que esta caixinha já reivindicava: 422 com o
+// valor máximo na mensagem. Baixar demais também dá 422, se deixaria a
+// caixinha negativa.
 
 // GET/POST/PATCH/DELETE /contas/{conta_id}/caixinhas
 ```
