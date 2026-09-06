@@ -744,11 +744,18 @@ class CaixinhaCriar(BaseModel):
 
 
 class CaixinhaAtualizar(BaseModel):
-    """`saldo_inicial` não está aqui de propósito.
+    """`saldo_inicial` é editável — a primeira versão não deixava, e errava.
 
-    Ele é a fotografia do que existia na criação; mudá-lo depois reescreveria
-    o passado da caixinha sem nenhum lançamento explicando a diferença. Para
-    corrigir o valor, o caminho é lançar (guardado/retirado) ou transferir.
+    O argumento era que mudá-lo reescreveria o passado. Não reescreve: nenhum
+    lançamento muda, e o campo não é histórico — é o rótulo que se dá a
+    dinheiro que já estava guardado sem caixinha. As duas validações da
+    criação continuam valendo na edição, então o valor não pode passar do que
+    a conta tem para rotular nem deixar a caixinha negativa.
+
+    O que a restrição produzia era uma armadilha: quem esquecesse de preencher
+    na criação — e é fácil esquecer, o campo não se explica sozinho — perdia o
+    único momento de fazê-lo, e a saída virava apagar a caixinha e criar
+    outra.
     """
 
     nome: str | None = Field(default=None, min_length=1, max_length=60)
@@ -756,6 +763,11 @@ class CaixinhaAtualizar(BaseModel):
     # `exclude_unset`: campo ausente e campo nulo querem dizer coisas
     # diferentes aqui.
     meta_id: int | None = None
+    # Aqui `None` não significa nada (a coluna não aceita nulo) e é recusado
+    # pelo router: para zerar, mande `0`.
+    saldo_inicial: Decimal | None = Field(
+        default=None, ge=0, max_digits=12, decimal_places=2
+    )
 
 
 class CaixinhaOut(_Base):

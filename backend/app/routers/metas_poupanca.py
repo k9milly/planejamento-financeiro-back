@@ -16,6 +16,7 @@ from app.database import get_db
 from app.models import Ano, Caixinha, Lancamento, MetaPoupanca, TipoMetaPoupanca
 from app.routers.anos import totais_do_ano
 from app.services.caixinhas import saldos
+from app.services.tempo import data_local, hoje as hoje_local
 from app.services.calculos import variacao_do_guardado
 from app.schemas import (
     MetaPoupancaCriar,
@@ -87,7 +88,7 @@ def ativas(db: Session = Depends(get_db)) -> MetasAtivasOut:
     progresso é zero em vez de erro: a meta existe, só não há movimento contra
     o que medi-la.
     """
-    hoje = date.today()
+    hoje = hoje_local()
     ano_ref = db.query(Ano).filter(Ano.ano == hoje.year).one_or_none()
     meses = totais_do_ano(ano_ref, db) if ano_ref else None
 
@@ -212,7 +213,14 @@ def _progresso_prazo(
     else:
         lancamentos = (
             db.query(Lancamento)
-            .filter(Lancamento.data >= meta.criada_em.date(), Lancamento.data <= hoje)
+            .filter(
+                # `criada_em` vem do banco em UTC; a data do lançamento é a do
+                # calendário de quem lançou. Comparar as duas cruas ignora o dia
+                # inteiro quando a meta é criada depois das 21h (ver
+                # `services/tempo.py`).
+                Lancamento.data >= data_local(meta.criada_em),
+                Lancamento.data <= hoje,
+            )
             .all()
         )
         guardado = variacao_do_guardado(lancamentos)
