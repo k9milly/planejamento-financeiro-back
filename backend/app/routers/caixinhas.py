@@ -12,7 +12,6 @@ lançamento, em `/anos/{ano}/lancamentos`.
 
 from __future__ import annotations
 
-from datetime import date
 from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -34,6 +33,7 @@ from app.schemas import (
     CaixinhaOut,
     TransferenciaCaixinha,
 )
+from app.services.tempo import hoje as hoje_local
 from app.services.caixinhas import (
     garantir_nao_negativas,
     guardado_sem_caixinha,
@@ -160,7 +160,9 @@ def criar(
 
 
 @router.patch(
-    "/{caixinha_id}", response_model=CaixinhaOut, summary="Edita nome ou meta vinculada"
+    "/{caixinha_id}",
+    response_model=CaixinhaOut,
+    summary="Edita nome, meta vinculada ou saldo inicial",
 )
 def atualizar(
     conta_id: int,
@@ -168,14 +170,45 @@ def atualizar(
     dados: CaixinhaAtualizar,
     db: Session = Depends(get_db),
 ) -> CaixinhaOut:
+    """`saldo_inicial` obedece às mesmas duas regras da criação.
+
+    O teto é o guardado que a conta ainda não rotulou **mais o que esta
+    caixinha já reivindicava** — sem somar a parte dela, aumentar de 100 para
+    120 seria recusado por causa dos 100 que ela mesma já ocupava.
+    """
     caixinha = _obter(conta_id, caixinha_id, db)
     alteracoes = dados.model_dump(exclude_unset=True)
 
     if "meta_id" in alteracoes:
         _validar_meta(alteracoes["meta_id"], db)
 
+    if "saldo_inicial" in alteracoes:
+        novo = alteracoes["saldo_inicial"]
+        if novo is None:
+            raise _erro(
+                "Para zerar o saldo inicial mande `0`, não `null` — a caixinha "
+                "sempre tem um valor de partida, nem que seja zero."
+            )
+        # Calculado antes de mexer no objeto: depois, a própria caixinha já
+        # entraria na conta com o valor novo.
+        teto = guardado_sem_caixinha(conta_id, db) + Decimal(
+            str(caixinha.saldo_inicial)
+        )
+        if novo > teto:
+            raise _erro(
+                f"O máximo que esta caixinha pode reivindicar é {_reais(teto)} "
+                f"— é o que a conta guardou e ainda não está em outra caixinha, "
+                f"somado ao que esta já tinha. Você pediu {_reais(novo)}."
+            )
+
     for campo, valor in alteracoes.items():
         setattr(caixinha, campo, valor)
+
+    # Baixar o saldo inicial pode deixar a caixinha negativa, se lançamentos já
+    # tiverem tirado dinheiro dela. Mesma trava de todo caminho que mexe em
+    # caixinha, aplicada sobre o resultado.
+    db.flush()
+    garantir_nao_negativas({caixinha.id}, db, _erro)
 
     db.commit()
     db.refresh(caixinha)
@@ -241,7 +274,7 @@ def transferir(
             f"para mover {_reais(dados.valor)}."
         )
 
-    hoje = date.today()
+    hoje = hoje_local()
     ano_ref = db.query(Ano).filter(Ano.ano == hoje.year).one_or_none()
     if ano_ref is None:
         raise _erro(

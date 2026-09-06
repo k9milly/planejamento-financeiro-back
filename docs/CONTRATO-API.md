@@ -483,6 +483,10 @@ POST   /contas/{conta_id}/caixinhas/transferir → 201 CaixinhaOut (a de destino
 `CaixinhaOut.saldo` é **calculado**, não é coluna: `saldo_inicial` mais o
 efeito dos lançamentos que apontam para a caixinha. Vem pronto na resposta.
 
+`saldo_inicial` pode ser **editado depois da criação** (`PATCH`), com o mesmo
+teto da criação somado ao que a própria caixinha já reivindicava. `null` é
+recusado — para zerar, mande `0`.
+
 `saldo_inicial` existe para dar nome, retroativamente, a dinheiro já lançado
 sem caixinha. Teto: o guardado da conta menos a soma das caixinhas ativas —
 acima disso, `422` com os dois números na mensagem. Só em conta corrente:

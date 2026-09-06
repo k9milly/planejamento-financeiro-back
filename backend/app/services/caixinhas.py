@@ -115,11 +115,10 @@ def guardado_da_conta(conta_id: int, db: Session) -> Decimal:
     conta existe, só não há movimento contra o que medi-la (mesma escolha que
     `GET /metas-poupanca/ativas` já faz).
     """
-    from datetime import date
-
     from app.routers.anos import totais_do_ano
+    from app.services.tempo import hoje
 
-    ano_ref = db.query(Ano).filter(Ano.ano == date.today().year).one_or_none()
+    ano_ref = db.query(Ano).filter(Ano.ano == hoje().year).one_or_none()
     if ano_ref is None:
         return ZERO
 

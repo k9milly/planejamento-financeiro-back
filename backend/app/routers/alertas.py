@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import calendar
 from datetime import date
+
+from app.services.tempo import hoje as hoje_local
 from decimal import Decimal
 
 from fastapi import APIRouter, Depends
@@ -46,7 +48,7 @@ def listar(db: Session = Depends(get_db)) -> list[AlertaOut]:
     Vencido some da lista sem virar histórico — é o mesmo que já acontece na
     tela de gastos fixos, que mostra situação por mês.
     """
-    hoje = date.today()
+    hoje = hoje_local()
     ano_ref = db.query(Ano).filter(Ano.ano == hoje.year).one_or_none()
     if ano_ref is None:
         # Ano corrente ainda não criado: não há vencimento a acompanhar.
