@@ -15,7 +15,13 @@ from decimal import Decimal
 
 import pytest
 
-HOJE = date.today()
+# Os testes precisam do mesmo "hoje" que a aplicação usa: o do fuso de São
+# Paulo, não o do relógio da máquina. O CI roda em UTC, então entre 21h e
+# meia-noite no Brasil os dois discordam em um dia — e uma suíte que usasse
+# `date.today()` falharia só nesse intervalo (ver `app/services/tempo.py`).
+from app.services.tempo import hoje
+
+HOJE = hoje()
 ANO = HOJE.year
 
 
