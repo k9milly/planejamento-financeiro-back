@@ -423,6 +423,8 @@ Se o ano corrente ainda não foi criado, devolve lista vazia.
 | `GET`/`POST`/`PATCH`/`DELETE` | `/contas/{conta_id}/caixinhas` | **novo** | ADR-10 |
 | `POST` | `/contas/{conta_id}/caixinhas/transferir` | **novo** | idem |
 | `POST`/`PATCH` | `/anos/{ano}/lancamentos` | alterado — `caixinha_id`, `caixinha_destino_id`, tipo `transferencia_caixinha` | idem |
+| `GET`/`POST`/`PATCH` | `/categorias` | alterado — `limite_mensal` | ADR-11 |
+| `GET`/`PATCH` | `/auth/eu` | alterado — `mostrar_orcamento_categoria` | idem |
 
 ---
 
@@ -504,6 +506,39 @@ progresso quando alguma caixinha ativa aponta para a meta.
 
 Contrato completo (schemas TypeScript, erros, o que a tela calcula sozinha) na
 seção 15 de `docs/specs/especificacao-tecnica-funcional.md`.
+
+---
+
+## Orçamento por categoria (ADR-11)
+
+Reverte o `ADR-0007`: o limite por categoria deixa de ser dado de exemplo do
+frontend e vira campo real. **Nenhum endpoint novo** — dois campos a mais em
+rotas que já existem.
+
+```
+GET/POST /categorias, PATCH /categorias/{id}
+  CategoriaCriar/Atualizar/Out ganham `limite_mensal` (Decimal como string, nullable)
+
+PATCH /auth/eu
+  ganha `mostrar_orcamento_categoria` (boolean, default true)
+GET /auth/eu
+  passa a devolvê-lo
+```
+
+`limite_mensal` precisa ser **maior que zero**; `null` é "sem orçamento" e é o
+padrão. No `PATCH`, campo ausente preserva o limite e `null` explícito o
+remove — o router usa `exclude_unset`, então os dois casos são distinguíveis.
+
+O **gasto real** por categoria não mudou: continua vindo de
+`ResumoMesOut.gastos_por_categoria`, a mesma agregação de sempre. A
+porcentagem contra o limite é calculada no frontend; o backend não a expõe.
+
+`mostrar_orcamento_categoria` é preferência de exibição — desligar não apaga
+`limite_mensal` nenhum. Fica no banco, e não no `localStorage`, porque a
+usuária abre o app em mais de um aparelho.
+
+Contrato completo na seção 16 de
+`docs/specs/especificacao-tecnica-funcional.md`.
 
 ---
 

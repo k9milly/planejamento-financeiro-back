@@ -436,17 +436,20 @@ que a API oferece, não o contrário:
 interface CategoriaCriar {
   nome: string;    // 1–60 caracteres
   cor?: string;     // "#rrggbb", default "#94a3b8"
+  limite_mensal?: string | null;   // Decimal como string — ver seção 16, ADR-11
 }
 interface CategoriaAtualizar {
   nome?: string;
   cor?: string;
   ativa?: boolean;
+  limite_mensal?: string | null;
 }
 interface CategoriaOut {
   id: number;
   nome: string;
   cor: string;
   ativa: boolean;
+  limite_mensal: string | null;    // novo — ver seção 16, ADR-11
 }
 ```
 
@@ -506,9 +509,14 @@ tabela `PreferenciaUsuario`, no mesmo espírito de
 ## 7. Metas & Orçamentos (`/metas`)
 
 **Atualização (ADR-06):** a parte de **meta de poupança** (`goals`) desta
-tela ganhou contrato de API real — ver seção 12. A parte de **orçamento por
-categoria** (`budgets`) continua fora de escopo, sem nenhuma mudança em
-relação ao que está descrito abaixo e ao `ADR-0007` do repositório back.
+tela ganhou contrato de API real — ver seção 12.
+
+**Atualização (ADR-11):** a parte de **orçamento por categoria**
+(`budgets`), que o texto original abaixo (e o `ADR-0007` do repositório
+back) tratava como fora de escopo, **deixou de ser mock** — ganhou
+contrato real, ver seção 16. O texto da seção "Decisão necessária" logo
+abaixo é histórico — descreve por que ficou de fora até aqui, não o
+estado atual.
 
 ### O que a tela mostra hoje (mock)
 
@@ -786,7 +794,8 @@ interface MetasAtivasOut {
 
 Esta é a implementação real do que a seção 7 chamava de `goals` na tela
 `/metas` — a lista `budgets` (orçamento por categoria) da mesma tela
-**continua mocada e fora de escopo**, sem relação com este contrato.
+também deixou de ser mock, mas por um contrato separado: ver seção 16
+(ADR-11).
 
 ### Alertas de vencimento
 
@@ -842,7 +851,7 @@ um subsistema de importação completo para OFX (prévia + confirmação,
 deduplicação, sugestão de categoria) — o que muda aqui é generalizar para
 CSV/XLSX e construir a tela no frontend, que hoje não existe.
 
-**Status do backend (30/08/2026):** a generalização já está implementada,
+**Status do backend (31/08/2026):** a generalização já está implementada,
 testada e **em produção** — as duas rotas abaixo respondem para os três
 formatos, e o caminho antigo (`/importacao/ofx/previa`, `.../ofx/confirmar`)
 responde `404`. O que falta deste item é só a tela.
@@ -1037,8 +1046,8 @@ Ver `docs/adr/ADR-10-*.md` para o raciocínio completo. Tela nova
 `Lancamento` e em `GET /metas-poupanca/ativas` (sem quebrar o contrato
 que já existe).
 
-**Status do backend (31/08/2026):** implementado e testado. O contrato abaixo
-vale como está; três detalhes que o ADR não tinha como antecipar aparecem
+**Status do backend (03/09/2026):** implementado e **em produção**. O contrato
+abaixo vale como está; os detalhes que o ADR não tinha como antecipar aparecem
 marcados ao longo da seção.
 
 ```ts
@@ -1065,8 +1074,7 @@ interface CaixinhaCriar {
 // você pediu R$ 500,00") — dá para mostrar direto na tela.
 //
 // 422 também ao criar caixinha num cartão de crédito: cartão não tem reserva
-// (ADR-0002), então a caixinha nunca poderia ter dinheiro. A tela deve
-// oferecer só contas `tipo="corrente"` no seletor.
+// (ADR-0002). A tela deve oferecer só contas `tipo="corrente"` no seletor.
 //
 // `meta_id` precisa apontar para uma meta ATIVA; meta desativada dá 422.
 
@@ -1093,10 +1101,10 @@ interface TransferenciaCaixinha {
 //   como entrada/saída do período, não muda o total de guardado da conta)
 //
 // A data é hoje — o corpo não tem campo de data. Por isso o ano corrente
-// precisa existir no sistema: se não existir, 422 pedindo para criá-lo; se
-// estiver arquivado, 409.
+// precisa existir: se não existir, 422 pedindo para criá-lo; se estiver
+// arquivado, 409.
 //
-// 422 quando o valor passa do saldo da origem (a mensagem traz o saldo), e
+// 422 quando o valor passa do saldo da origem (a mensagem traz o saldo) e
 // quando origem ou destino está desativada. 404 quando alguma das duas não
 // é daquela conta.
 ```
@@ -1117,38 +1125,37 @@ já define.
 Só as caixinhas **ativas** contam: desativar uma devolve o dinheiro dela ao
 guardado sem rótulo, e a meta volta ao cálculo do ADR-06.
 
-### Caixinha nunca fica negativa
-
-Qualquer operação que deixaria uma caixinha com saldo abaixo de zero responde
-`422`, com a mensagem dizendo qual caixinha e quanto faltaria — dá para mostrar
-direto na tela. Vale para os quatro caminhos: criar lançamento, editar, excluir
-e transferir.
-
-Duas consequências para a tela:
-
-- **Excluir um lançamento pode falhar.** Apagar o `guardado` que financiou uma
-  retirada posterior é recusado. A tela precisa tratar `422` no `DELETE` de
-  lançamento, não só nos `POST`/`PATCH`.
-- **Editar valor ou tipo pode falhar pelo mesmo motivo**, mesmo sem tocar em
-  `caixinha_id`.
-
-Esvaziar até exatamente zero é permitido — a regra é sobre ficar negativa.
-
 ### Conta com caixinhas exige escolher uma
 
 Assim que a conta tem **pelo menos uma caixinha ativa**, todo lançamento que
 mexe na reserva dela precisa mandar `caixinha_id`: `guardado`, `retirado`, e
 `rendimento`/`perda` com `destino="guardado"`. Sem ele, `422` — e a mensagem
-lista os nomes das caixinhas disponíveis, para a tela poder mostrar as opções.
+lista os nomes das caixinhas disponíveis, para a tela mostrar as opções.
 
 `entrada`, `saida` e transferência entre contas não são afetadas.
 
-Para a tela isso significa que o seletor "Caixinha", quando a conta escolhida
-tiver caixinhas, **não é opcional** naqueles tipos — vira campo obrigatório.
-Numa conta sem caixinha nenhuma o seletor não aparece e nada muda.
+Para a tela: o seletor "Caixinha", quando a conta escolhida tiver caixinhas,
+**não é opcional** naqueles tipos — vira campo obrigatório. Numa conta sem
+caixinha nenhuma o seletor não aparece e nada muda.
 
 A mesma regra vale na confirmação da importação, que por isso aceita
 `caixinha_id` em cada `TransacaoConfirmar`.
+
+### Caixinha nunca fica negativa
+
+Qualquer operação que deixaria uma caixinha abaixo de zero responde `422`,
+dizendo qual caixinha e quanto faltaria. Vale para criar lançamento, editar,
+excluir e transferir.
+
+Duas consequências para a tela:
+
+- **Excluir um lançamento pode falhar.** Apagar o `guardado` que financiou
+  uma retirada posterior é recusado — a tela precisa tratar `422` no `DELETE`
+  de lançamento, não só nos `POST`/`PATCH`.
+- **Editar valor ou tipo pode falhar pelo mesmo motivo**, mesmo sem tocar em
+  `caixinha_id`.
+
+Esvaziar até exatamente zero é permitido — a regra é sobre ficar negativa.
 
 ### Guardado sem caixinha — a tela calcula, não tem endpoint
 
@@ -1159,15 +1166,67 @@ da seção 8, onde o saldo da conta também vem do resumo e não de `GET /contas
 
 Numa conta já organizada esse número tende a **zero** — todo guardado tem
 caixinha. Ele só é maior que zero enquanto houver dinheiro lançado antes de as
-caixinhas existirem, e é justamente esse saldo que `saldo_inicial` consome ao
-criar uma caixinha nova.
+caixinhas existirem, e é esse saldo que `saldo_inicial` consome.
 
 ### Desativar uma caixinha
 
 `DELETE` é soft-delete, como em metas e categorias: a caixinha some da lista
 (`incluir_inativas=true` a traz de volta) e o saldo dela volta a ser guardado
-sem rótulo da conta. Nenhum lançamento é apagado, e o `GET /anos/{ano}/resumo`
+sem rótulo da conta. Nenhum lançamento é apagado, e `GET /anos/{ano}/resumo`
 não muda — o dinheiro nunca saiu da conta.
+
+---
+
+## 16. Orçamento por categoria — limite real e editável (ADR-11)
+
+Ver `docs/adr/ADR-11-*.md`. Reverte o `ADR-0007` do back — o limite por
+categoria deixa de ser dado de exemplo do frontend e vira campo real da
+própria `Categoria` (sem entidade nova, sem endpoint novo — só dois
+campos a mais em endpoints que já existem).
+
+**Status do backend (05/09/2026):** implementado e testado. Duas regras que o
+ADR não especificava aparecem marcadas abaixo.
+
+```ts
+// Categoria ganha limite_mensal (ver seção 5 para a interface completa)
+// GET /categorias já devolve limite_mensal em cada item
+// PATCH /categorias/{id} já aceita limite_mensal (null remove o limite)
+//
+// Campo AUSENTE e campo NULO querem dizer coisas diferentes: mandar só
+// { cor } preserva o limite; mandar { limite_mensal: null } o remove.
+//
+// O limite precisa ser MAIOR QUE ZERO — 0 ou negativo respondem 422. "Sem
+// orçamento" se escreve com null, não com zero; um teto de zero não diz nada.
+// Desativar a categoria não mexe no limite.
+
+// PATCH /auth/eu ganha um campo novo, junto dos que o ADR-06 já definiu:
+interface UsuarioAtualizar {
+  nome?: string;
+  alertas_email_ativo?: boolean;
+  mostrar_orcamento_categoria?: boolean;   // novo, default true
+}
+```
+
+O "gasto atual" de cada categoria no mês **já existe** —
+`ResumoMesOut.gastos_por_categoria` (seção 1) é a mesma agregação que
+alimenta a Tabela Dinâmica. A tela de Metas & Orçamentos casa esse valor
+com `limite_mensal` (de `GET /categorias`) para montar a barra de
+progresso — cálculo no frontend, sem chamada nova.
+
+Limite é sempre recorrente (mesmo valor todo mês, sem variar por mês
+nesta versão). Ultrapassar 100% é só efeito visual (cor muda) — nenhum
+alerta em outro canal, mesmo escopo de alertas que o `ADR-06` já fechou.
+
+O aviso "dados de exemplo — sem endpoint no backend (ADR 0007)" que a
+tela mostra hoje sai — o limite passa a ser real.
+
+`GET /auth/eu` passa a devolver `mostrar_orcamento_categoria` junto dos campos
+que já devolvia. Ele nasce `true`, inclusive para a conta que já existia —
+vem do default da coluna, sem migração de dados. Desligar **não apaga** limite
+nenhum: é preferência de exibição, não de dado.
+
+Uma categoria sem limite (`null`) continua aparecendo normalmente em
+`gastos_por_categoria` — ela só não tem barra de progresso.
 
 ---
 
@@ -1197,5 +1256,6 @@ aquela rodada. Os da seção 12 são o domínio novo decidido pelo ADR-06:
 nome, meta de poupança e alertas de vencimento. Os da seção 13
 (importação) já existem para OFX — o ADR-08 generaliza para CSV/XLSX; a
 tela em si é nova no frontend. `budgets` (orçamento por categoria, dentro
-da tela `/metas`) continua fora de escopo, sem endpoint — ver seção 7 e o
-`ADR-0007` do repositório back.
+da tela `/metas`) deixou de ficar fora de escopo — o ADR-11 reverte o
+`ADR-0007` do repositório back; ver seção 16 (sem endpoint novo, só
+campos a mais em `/categorias` e `/auth/eu`, que já existiam).
