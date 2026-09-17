@@ -38,6 +38,7 @@ from app.services.extrato import (
     ErroExtrato,
     TransacaoExtrato,
     identificador_sintetico,
+    para_decimal,
 )
 
 COLUNAS = ("data", "valor", "descricao")
@@ -123,23 +124,10 @@ def _para_valor(bruto: object, linha: int) -> Decimal:
         return Decimal(str(bruto)).quantize(Decimal("0.01"))
 
     texto = _texto(bruto)
-    limpo = re.sub(r"[^\d,.\-]", "", texto)
-
-    # Quem estiver mais à direita é o separador decimal; o outro é milhar.
-    if "," in limpo and "." in limpo:
-        decimal_e_virgula = limpo.rfind(",") > limpo.rfind(".")
-        limpo = (
-            limpo.replace(".", "").replace(",", ".")
-            if decimal_e_virgula
-            else limpo.replace(",", "")
-        )
-    elif "," in limpo:
-        limpo = limpo.replace(",", ".")
-
-    try:
-        return Decimal(limpo).quantize(Decimal("0.01"))
-    except (InvalidOperation, ValueError) as erro:
-        raise ErroTabular(f"Valor inválido na linha {linha}: {texto!r}.") from erro
+    valor = para_decimal(texto)
+    if valor is None:
+        raise ErroTabular(f"Valor inválido na linha {linha}: {texto!r}.")
+    return valor
 
 
 def _transacoes(linhas: list[list[object]]) -> list[TransacaoExtrato]:
