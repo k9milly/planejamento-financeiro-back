@@ -862,7 +862,7 @@ Dois passos, de propósito — nada é gravado na prévia:
 
 ```ts
 // POST /anos/{ano}/importacao/previa
-// multipart: arquivo (File) + formato: "csv" | "xlsx" | "ofx"
+// multipart: arquivo (File) + formato: "csv" | "xlsx" | "ofx" | "pdf"
 // Os dois campos são obrigatórios. O formato NÃO é deduzido da extensão:
 // a tela tem o seletor de qualquer forma, e adivinhar esconderia o engano
 // mais provável — escolher "csv" e enviar o OFX, que hoje dá 422 legível.
@@ -950,6 +950,39 @@ valor e mesma descrição, colidiriam e o segundo sumiria como duplicata.
 conferido de verdade em 31/08 — traz um UUID por transação, que é o mesmo
 papel do `FITID`. Quando a coluna existe, o `fitid` é esse valor em vez do
 sintético, e a deduplicação fica exata. Nada muda para a tela.
+
+### PDF — só de bancos conhecidos (ADR-12)
+
+PDF não tem layout padrão: cada banco organiza a página do seu jeito, e o
+arquivo guarda como desenhar, não o que cada pedaço significa. Por isso o
+backend tem **um leitor por banco**, e hoje conhece dois: **Nubank** e
+**Mercado Pago** (extrato de conta). Qualquer outro PDF é recusado com `422` e
+mensagem explicando.
+
+Isso é deliberado: um leitor genérico erraria calado no extrato do Mercado
+Pago, onde cada linha traz dois valores (o da transação e o saldo corrente) e
+pegar o errado importaria números plausíveis e falsos.
+
+Para a tela, três coisas:
+
+1. **Não prometer PDF em geral.** Sugestão de texto no seletor: "PDF funciona
+   para Nubank e Mercado Pago. Para outros bancos, use OFX, CSV ou XLSX."
+2. **Destacar o `total_lidas` da prévia quando o formato for `pdf`.** Num PDF a
+   maior parte do texto nunca foi transação, então linha não reconhecida é
+   ignorada em silêncio — esse número é como a pessoa percebe que o extrato
+   tinha 40 lançamentos e vieram 12.
+3. **Fatura de cartão não é lida**, só extrato de conta. Faturas escrevem a
+   data sem ano (`26/07`), e inferir o ano jogaria lançamento para o ano
+   errado.
+
+Erros com mensagem própria, prontos para exibir: PDF escaneado (imagem, sem
+texto), layout de banco desconhecido, e PDF protegido por senha de verdade.
+
+**PDF e CSV do mesmo extrato não deduplicam entre si**, porque o PDF do Mercado
+Pago usa o `ID da operação` do banco e o CSV usa outro identificador. Quem
+importar os dois vê as linhas marcadas como `possivel_repetido`, já
+desmarcadas — o aviso funciona, mas vale não sugerir na interface que importar
+os dois é seguro.
 
 ### Layout aceito para CSV/XLSX
 

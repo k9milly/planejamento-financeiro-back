@@ -439,7 +439,7 @@ nenhum frontend consumia essas rotas ainda — o caminho antigo responde `404`.
 POST /anos/{ano}/importacao/previa
   multipart/form-data:
     arquivo: File           (obrigatório)
-    formato: "csv" | "xlsx" | "ofx"   (obrigatório)
+    formato: "csv" | "xlsx" | "ofx" | "pdf"   (obrigatório)
   → 200 PreviaImportacao
 
 POST /anos/{ano}/importacao/confirmar
@@ -460,6 +460,16 @@ O identificador de dedupe (`fitid`) vem dessa coluna quando ela existe; senão
 é sintetizado de `data + valor com sinal + descrição`, o mesmo já usado no OFX
 sem `FITID`. Consequência do sintético: o mesmo extrato baixado em CSV e em
 XLSX não é importado duas vezes.
+
+**PDF (ADR-12)** é o quarto formato, e o único limitado por banco: há um
+leitor por layout, e hoje existem dois — **Nubank** e **Mercado Pago** (extrato
+de conta, não fatura). Outro banco responde `422` explicando. Os schemas não
+mudam.
+
+Linha não reconhecida é ignorada em silêncio (num PDF a maior parte do texto
+nunca foi transação), então o `total_lidas` da prévia é a principal defesa de
+quem importa. PDF e CSV do mesmo extrato **não** deduplicam entre si — caem em
+`possivel_repetido`.
 
 Contrato completo (schemas TypeScript, comportamento esperado da tela para
 `duplicado`/`possivel_repetido`/`fora_do_ano`) na seção 13 de
