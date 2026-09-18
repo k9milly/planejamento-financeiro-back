@@ -9,6 +9,10 @@ psycopg[binary]==3.3.4
 pydantic==2.13.4
 pydantic-settings==2.7.0
 openpyxl==3.1.5
+# Leitura de extrato em PDF. Wheel pura (395 KB) e sem dependências — o
+# pdfplumber daria posição de cada palavra, mas traria cryptography, pillow e
+# pypdfium2 junto, todos binários.
+pypdf==6.19.0
 # Necessário para o upload de arquivo na importação de extrato.
 python-multipart==0.0.20
 # Autenticação: hash de senha e tokens.
