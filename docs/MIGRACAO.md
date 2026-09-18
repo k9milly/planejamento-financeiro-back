@@ -3,14 +3,16 @@
 Duas origens: a planilha antiga (uma vez só, no começo) e o extrato do banco
 (sempre que quiser lançar o mês).
 
-## Extrato bancário (OFX, CSV ou XLSX)
+## Extrato bancário (OFX, CSV, XLSX ou PDF)
 
 Baixe o extrato pelo aplicativo do banco e use o botão *Importar extrato* no
 cabeçalho, escolhendo o formato do arquivo. O fluxo tem duas etapas e **nada é
 gravado na primeira**.
 
 Prefira **OFX** quando o banco oferecer: só nele existe o identificador de
-transação do próprio banco, que torna a deduplicação exata. CSV e XLSX
+transação do próprio banco, que torna a deduplicação exata. Deixe o **PDF por
+último** — é o único que depende de adivinhar onde estão os dados na página
+(ver a seção dele abaixo). CSV e XLSX
 funcionam igual em todo o resto — a diferença está explicada em
 *Deduplicação*, abaixo.
 
@@ -64,6 +66,38 @@ A sugestão nunca é aplicada sozinha: ela só preenche a tela de revisão.
 O leitor aceita OFX 1.x (SGML, o formato que os bancos brasileiros usam) e
 OFX 2.x (XML), em UTF-8 ou ISO-8859-1. Usa `MEMO` como descrição e cai para
 `NAME` quando o banco preenche só esse.
+
+### PDF
+
+Funciona para **Nubank** e **Mercado Pago** (o extrato da conta, não a fatura
+do cartão). Outros bancos são recusados com um aviso.
+
+Parece pouco, e é de propósito. PDF não tem formato combinado: cada banco
+desenha a página do jeito dele, e o arquivo guarda como desenhar, não o que
+cada pedaço significa. O extrato do Mercado Pago, por exemplo, mostra dois
+números em cada linha — o valor da transação e o saldo depois dela. Um leitor
+que não soubesse disso importaria o saldo no lugar do valor: número parecido,
+completamente errado, e sem nenhum sinal de que deu problema. É melhor recusar
+o que não se conhece.
+
+**Confira o número de lançamentos na tela de revisão.** Num PDF a maior parte
+do texto (endereço, telefone, aviso legal) nunca foi lançamento, então o que o
+leitor não reconhece ele ignora calado. Se o extrato tem 40 lançamentos e
+apareceram 12, alguma coisa escapou — e como nada é gravado antes de você
+confirmar, dá para desistir na hora.
+
+Dois avisos próprios:
+
+- **PDF escaneado** — se o arquivo é foto ou digitalização, não há texto para
+  ler, e o sistema diz isso em vez de importar zero lançamentos em silêncio.
+- **Fatura de cartão** — faturas escrevem a data sem o ano (`26/07`), e chutar
+  o ano jogaria lançamento para o ano errado. Use o extrato da conta.
+
+Uma observação se você baixar o mesmo mês em PDF **e** em CSV: eles não se
+reconhecem como o mesmo lançamento, porque cada formato traz um identificador
+de origem diferente. As linhas repetidas aparecem marcadas como possível
+repetição e já vêm desmarcadas, então o aviso existe — mas o melhor é escolher
+um formato e ficar com ele.
 
 ### CSV e XLSX
 

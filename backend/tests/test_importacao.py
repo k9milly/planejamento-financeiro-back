@@ -449,3 +449,89 @@ class TestOutrosFormatos:
             files={"arquivo": ("extrato.csv", EXTRATO_CSV, "text/csv")},
         )
         assert resposta.status_code == 422
+
+
+# --------------------------------------------------------------------------- #
+# PDF (ADR-12)
+#
+# O fluxo é o mesmo dos outros três — o que muda é só o leitor. A fixtura usa o
+# layout do Mercado Pago porque é o que ela mais usa; os detalhes de cada perfil
+# ficam em `test_pdf.py`.
+# --------------------------------------------------------------------------- #
+from tests.test_pdf import pdf as montar_pdf  # noqa: E402
+
+EXTRATO_PDF = montar_pdf(
+    [
+        "EXTRATO DE CONTA",
+        "Data Descrição ID da operação Valor Saldo",
+        "05-08-2026 CLAUDE AI SUBSCRIPTION 171000000001 R$ -113,85 R$ 100,00",
+        "06-08-2026 IFOOD RESTAURANTE 171000000002 R$ -47,00 R$ 53,00",
+        "07-08-2026 SALARIO 171000000003 R$ 2000,00 R$ 2053,00",
+    ]
+)
+
+
+class TestPDF:
+    def test_le_e_classifica_pelo_sinal(self, cliente, ano):
+        dados = enviar(cliente, EXTRATO_PDF, "pdf").json()
+
+        assert dados["total_lidas"] == 3
+        assert [t["tipo_sugerido"] for t in dados["transacoes"]] == [
+            "saida",
+            "saida",
+            "entrada",
+        ]
+
+    def test_reimportar_o_mesmo_pdf_nao_duplica(self, cliente, ano, conta):
+        assert confirmar_tudo(cliente, conta, EXTRATO_PDF, "pdf")["importadas"] == 3
+
+        segunda = confirmar_tudo(cliente, conta, EXTRATO_PDF, "pdf")
+        assert segunda["importadas"] == 0
+        assert segunda["ignoradas_duplicadas"] == 3
+        assert len(cliente.get("/anos/2026/lancamentos").json()) == 3
+
+    def test_o_mesmo_extrato_em_pdf_e_csv_vira_possivel_repetido(
+        self, cliente, ano, conta
+    ):
+        """PDF e CSV **não** deduplicam entre si, e isso é consequência de uma
+        escolha melhor: o PDF do Mercado Pago traz o ID da operação, que separa
+        duas compras idênticas no mesmo dia — coisa que o identificador
+        sintético do CSV não faz.
+
+        Quem importa os dois não fica sem aviso: a prévia marca as linhas como
+        `possivel_repetido` (mesma data e valor), e elas vêm desmarcadas.
+        """
+        equivalente = (
+            b"data;valor;descricao\n"
+            b"05/08/2026;-113,85;CLAUDE AI SUBSCRIPTION\n"
+        )
+
+        confirmar_tudo(cliente, conta, EXTRATO_PDF, "pdf")
+
+        linha = enviar(cliente, equivalente, "csv").json()["transacoes"][0]
+        assert linha["duplicado"] is False
+        assert linha["possivel_repetido"] is True
+
+    def test_regra_de_categoria_vale_para_pdf(self, cliente, ano, comida):
+        cliente.post("/regras", json={"padrao": "ifood", "categoria_id": comida["id"]})
+
+        previa = enviar(cliente, EXTRATO_PDF, "pdf").json()
+        sugeridas = {
+            t["descricao"]: t["categoria_sugerida_nome"] for t in previa["transacoes"]
+        }
+        assert sugeridas["IFOOD RESTAURANTE"] == "Comida"
+
+    def test_pdf_escaneado_da_erro_legivel(self, cliente, ano):
+        resposta = enviar(cliente, montar_pdf([]), "pdf")
+        assert resposta.status_code == 422
+        assert "escaneado" in resposta.json()["detail"]
+
+    def test_banco_desconhecido_da_erro_legivel(self, cliente, ano):
+        conteudo = montar_pdf(["Banco Qualquer", "08/08/2026 Compra -30,00"])
+        resposta = enviar(cliente, conteudo, "pdf")
+        assert resposta.status_code == 422
+        assert "layout" in resposta.json()["detail"]
+
+    def test_arquivo_que_nao_e_pdf(self, cliente, ano):
+        resposta = enviar(cliente, EXTRATO_CSV, "pdf")
+        assert resposta.status_code == 422

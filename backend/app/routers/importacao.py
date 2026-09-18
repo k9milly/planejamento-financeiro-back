@@ -1,4 +1,4 @@
-"""Importação de extrato bancário em OFX, CSV ou XLSX.
+"""Importação de extrato bancário em OFX, CSV, XLSX ou PDF.
 
 O fluxo tem dois passos de propósito: **prévia** e **confirmação**. Nada é
 gravado no primeiro. Um extrato traz transações que o app não consegue
@@ -45,6 +45,7 @@ from app.services.caixinhas import (
 )
 from app.services.extrato import ErroExtrato, TransacaoExtrato
 from app.services.ofx import ler_ofx
+from app.services.pdf import ler_pdf
 from app.services.tabular import ler_csv, ler_xlsx
 
 router = APIRouter(prefix="/anos/{ano}/importacao", tags=["importação"])
@@ -53,12 +54,13 @@ router = APIRouter(prefix="/anos/{ano}/importacao", tags=["importação"])
 # extrato e não vale a pena carregar na memória.
 TAMANHO_MAXIMO = 10 * 1024 * 1024
 
-Formato = Literal["ofx", "csv", "xlsx"]
+Formato = Literal["ofx", "csv", "xlsx", "pdf"]
 
 LEITORES: dict[str, Callable[[bytes], list[TransacaoExtrato]]] = {
     "ofx": ler_ofx,
     "csv": ler_csv,
     "xlsx": ler_xlsx,
+    "pdf": ler_pdf,
 }
 
 
