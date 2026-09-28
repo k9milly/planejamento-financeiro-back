@@ -19,6 +19,7 @@ from app.models import (
     DestinoRendimento,
     FormaPagamento,
     Importancia,
+    ModoJuros,
     SituacaoGastoFixo,
     TipoConta,
     TipoLancamento,
@@ -374,6 +375,10 @@ class LancamentoOut(_Base):
     forma_pagamento: FormaPagamento | None
     caixinha_id: int | None
     caixinha_destino_id: int | None
+    # Preenchidos só quando o lançamento é parcela de uma compra (ADR-14). A
+    # tela mostra "3/10" a partir deles.
+    compra_parcelada_id: int | None
+    numero_parcela: int | None
     descricao: str
     fitid: str | None
 
@@ -637,8 +642,14 @@ class ResumoAnoOut(BaseModel):
 # --------------------------------------------------------------------------- #
 class MetaPoupancaCriar(BaseModel):
     tipo: TipoMetaPoupanca
+    # Rótulo livre para diferenciar metas do mesmo tipo (ADR-13). Sem ele, a
+    # interface usa um rótulo genérico, como sempre fez.
+    nome: str | None = Field(default=None, max_length=60)
     valor_alvo: Decimal = Field(gt=0, max_digits=12, decimal_places=2)
     data_alvo: date | None = None
+    # Para qual desejo da wishlist esta meta junta dinheiro. O router confere
+    # que o item existe — aqui não dá, depende do banco.
+    wishlist_item_id: int | None = None
 
     @model_validator(mode="after")
     def _coerencia_do_tipo(self) -> "MetaPoupancaCriar":
@@ -654,6 +665,8 @@ class MetaPoupancaCriar(BaseModel):
 class MetaPoupancaOut(_Base):
     id: int
     tipo: TipoMetaPoupanca
+    nome: str | None
+    wishlist_item_id: int | None
     valor_alvo: Decimal
     data_alvo: date | None
     criada_em: datetime
@@ -664,6 +677,8 @@ class ProgressoMetaMensalOut(BaseModel):
     """Quanto do alvo do mês corrente já foi guardado."""
 
     id: int
+    nome: str | None
+    wishlist_item_id: int | None
     valor_alvo: Decimal
     guardado_no_mes: Decimal
     # Pode passar de 100 quando se guarda mais que o alvo — não é limitado de
@@ -675,6 +690,8 @@ class ProgressoMetaPrazoOut(BaseModel):
     """Quanto do alvo já foi acumulado, e quanto tempo resta."""
 
     id: int
+    nome: str | None
+    wishlist_item_id: int | None
     valor_alvo: Decimal
     data_alvo: date
     guardado_acumulado: Decimal
@@ -685,12 +702,19 @@ class ProgressoMetaPrazoOut(BaseModel):
 
 
 class MetasAtivasOut(BaseModel):
-    """As duas metas que podem estar valendo ao mesmo tempo, com o progresso
-    já calculado. `null` no lugar de uma delas = não existe meta ativa
-    daquele tipo."""
+    """Todas as metas em vigor, com o progresso de cada uma já calculado.
 
-    mensal: ProgressoMetaMensalOut | None
-    prazo: ProgressoMetaPrazoOut | None
+    Duas listas e não um par nulável (ADR-13): várias metas do mesmo tipo
+    podem valer ao mesmo tempo. Listas vazias quando não há meta do tipo.
+
+    Os dois tipos vêm separados porque medem coisas diferentes —
+    `guardado_no_mes` é fluxo do mês, `guardado_acumulado` é estoque. Somar
+    um com o outro daria um número sem significado, e separar no schema é o
+    que impede a interface de fazer isso por descuido.
+    """
+
+    mensais: list[ProgressoMetaMensalOut]
+    prazos: list[ProgressoMetaPrazoOut]
 
 
 class AlertaGastoFixoOut(BaseModel):
@@ -786,3 +810,110 @@ class TransferenciaCaixinha(BaseModel):
     caixinha_origem_id: int
     caixinha_destino_id: int
     valor: Decimal = Field(gt=0, max_digits=12, decimal_places=2)
+
+
+# --------------------------------------------------------------------------- #
+# Compra parcelada no cartão (ADR-14)
+# --------------------------------------------------------------------------- #
+class CompraParceladaCriar(BaseModel):
+    """Os dados brutos que a pessoa digitou — quem calcula é o servidor.
+
+    Três combinações válidas, e só três (ADR-14):
+
+    | `tem_juros` | `modo_juros` | o que vem preenchido |
+    | --- | --- | --- |
+    | `False` | ausente | `valor_total` (o preço da compra) |
+    | `True` | `valor` | `valor_parcela` (o que o cartão já mostra) |
+    | `True` | `percentual` | `valor_total` (à vista) + `taxa_juros_pct` |
+
+    O cálculo fica no backend para não existirem duas implementações da mesma
+    conta, divergindo quando uma for corrigida e a outra não.
+    """
+
+    descricao: str = Field(min_length=1, max_length=120)
+    conta_id: int
+    categoria_id: int | None = None
+    data_primeira_parcela: date
+    numero_parcelas: int = Field(ge=2, le=24)
+
+    tem_juros: bool = False
+    modo_juros: ModoJuros | None = None
+    valor_total: Decimal | None = Field(
+        default=None, gt=0, max_digits=12, decimal_places=2
+    )
+    valor_parcela: Decimal | None = Field(
+        default=None, gt=0, max_digits=12, decimal_places=2
+    )
+    taxa_juros_pct: Decimal | None = Field(
+        default=None, gt=0, max_digits=5, decimal_places=2
+    )
+
+    @model_validator(mode="after")
+    def _coerencia_dos_juros(self) -> "CompraParceladaCriar":
+        """Recusa combinação incompleta ou contraditória.
+
+        Aceitar um campo que não pertence ao modo escolhido seria pior que
+        recusar: o valor digitado seria ignorado em silêncio, e a pessoa acha
+        que informou um juro que o sistema nunca usou.
+        """
+        if not self.tem_juros:
+            if self.modo_juros is not None:
+                raise ValueError(
+                    "Sem juros não há como informá-los: remova 'modo_juros'."
+                )
+            if self.valor_total is None:
+                raise ValueError("Informe o valor total da compra.")
+            if self.valor_parcela is not None or self.taxa_juros_pct is not None:
+                raise ValueError(
+                    "Sem juros, o valor de cada parcela sai da divisão do total "
+                    "— não informe 'valor_parcela' nem 'taxa_juros_pct'."
+                )
+            return self
+
+        if self.modo_juros is None:
+            raise ValueError(
+                "Com juros, diga como informá-los: 'valor' (o valor de cada "
+                "parcela) ou 'percentual' (a taxa ao mês)."
+            )
+
+        if self.modo_juros is ModoJuros.VALOR:
+            if self.valor_parcela is None:
+                raise ValueError("Informe o valor de cada parcela.")
+            if self.valor_total is not None or self.taxa_juros_pct is not None:
+                raise ValueError(
+                    "No modo 'valor', o total sai da multiplicação — não "
+                    "informe 'valor_total' nem 'taxa_juros_pct'."
+                )
+            return self
+
+        if self.valor_total is None or self.taxa_juros_pct is None:
+            raise ValueError(
+                "No modo 'percentual', informe o valor total à vista e a taxa "
+                "de juros ao mês."
+            )
+        if self.valor_parcela is not None:
+            raise ValueError(
+                "No modo 'percentual', o valor da parcela é calculado — não "
+                "informe 'valor_parcela'."
+            )
+        return self
+
+
+class CompraParceladaOut(_Base):
+    id: int
+    descricao: str
+    conta_id: int
+    categoria_id: int | None
+    numero_parcelas: int
+    tem_juros: bool
+    modo_juros: ModoJuros | None
+    taxa_juros_pct: Decimal | None
+    # O valor da parcela comum. Quando a divisão não é exata, a última é maior
+    # — ela absorve os centavos que sobram.
+    valor_parcela: Decimal
+    # A soma efetiva das parcelas, **com** juros quando houver. No modo
+    # percentual isto é maior que o `valor_total` que foi enviado, que é o
+    # preço à vista.
+    valor_total: Decimal
+    criada_em: datetime
+    parcelas: list[LancamentoOut]

@@ -103,10 +103,17 @@ class TestMetasPoupanca:
         )
 
         ativas = cliente.get("/metas-poupanca/ativas").json()
-        assert ativas["mensal"] is not None
-        assert ativas["prazo"] is not None
+        assert len(ativas["mensais"]) == 1
+        assert len(ativas["prazos"]) == 1
 
-    def test_meta_nova_aposenta_a_anterior_do_mesmo_tipo(self, cliente):
+    def test_varias_metas_do_mesmo_tipo_convivem(self, cliente):
+        """O ADR-06 aposentava a anterior; o ADR-13 reverteu isso.
+
+        Meta deixou de ser um hábito genérico e virou objetivo específico:
+        juntar para um tênis e para um curso são duas metas que convivem, e
+        aposentar uma ao criar a outra apagaria o progresso de algo que a
+        pessoa não desistiu.
+        """
         primeira = cliente.post(
             "/metas-poupanca", json={"tipo": "mensal", "valor_alvo": "300"}
         ).json()
@@ -115,12 +122,22 @@ class TestMetasPoupanca:
         ).json()
 
         ativas = cliente.get("/metas-poupanca").json()
-        assert [m["id"] for m in ativas] == [segunda["id"]]
+        assert {m["id"] for m in ativas} == {primeira["id"], segunda["id"]}
+        assert all(m["ativa"] for m in ativas)
 
-        # A antiga vira histórico, não desaparece.
-        todas = cliente.get("/metas-poupanca?incluir_inativas=true").json()
-        antiga = next(m for m in todas if m["id"] == primeira["id"])
-        assert antiga["ativa"] is False
+    def test_desativar_continua_sendo_por_id(self, cliente):
+        """Virou o único jeito de uma meta sair do ar."""
+        primeira = cliente.post(
+            "/metas-poupanca", json={"tipo": "mensal", "valor_alvo": "300"}
+        ).json()
+        segunda = cliente.post(
+            "/metas-poupanca", json={"tipo": "mensal", "valor_alvo": "500"}
+        ).json()
+
+        assert cliente.delete(f"/metas-poupanca/{primeira['id']}").status_code == 204
+
+        ativas = cliente.get("/metas-poupanca").json()
+        assert [m["id"] for m in ativas] == [segunda["id"]]
 
     def test_progresso_vem_do_guardado_real(self, cliente, ano_corrente, conta):
         """O percentual tem de bater com o `guardado` que o resumo do ano
@@ -137,7 +154,7 @@ class TestMetasPoupanca:
         )
         cliente.post("/metas-poupanca", json={"tipo": "mensal", "valor_alvo": "500"})
 
-        mensal = cliente.get("/metas-poupanca/ativas").json()["mensal"]
+        mensal = cliente.get("/metas-poupanca/ativas").json()["mensais"][0]
         assert mensal["guardado_no_mes"] == "250.00"
         assert mensal["percentual"] == 50.0
 
@@ -168,7 +185,7 @@ class TestMetasPoupanca:
             json={"tipo": "prazo", "valor_alvo": "6000", "data_alvo": "2030-12-31"},
         )
 
-        prazo = cliente.get("/metas-poupanca/ativas").json()["prazo"]
+        prazo = cliente.get("/metas-poupanca/ativas").json()["prazos"][0]
         # A reserva tem 9.000, mas nada disso foi guardado *para esta meta*.
         # (O lançamento é do dia 1; a meta nasceu hoje.)
         if hoje.day > 1:
@@ -191,7 +208,7 @@ class TestMetasPoupanca:
             },
         )
 
-        prazo = cliente.get("/metas-poupanca/ativas").json()["prazo"]
+        prazo = cliente.get("/metas-poupanca/ativas").json()["prazos"][0]
         assert prazo["guardado_acumulado"] == "250.00"
         assert prazo["percentual"] == 25.0
 
@@ -215,12 +232,13 @@ class TestMetasPoupanca:
                 },
             )
 
-        prazo = cliente.get("/metas-poupanca/ativas").json()["prazo"]
+        prazo = cliente.get("/metas-poupanca/ativas").json()["prazos"][0]
         assert prazo["guardado_acumulado"] == "250.00"
 
-    def test_sem_meta_ativa_devolve_nulo(self, cliente):
+    def test_sem_meta_ativa_devolve_listas_vazias(self, cliente):
+        """Lista vazia, não `null` — a ausência deixou de ser caso especial."""
         ativas = cliente.get("/metas-poupanca/ativas").json()
-        assert ativas == {"mensal": None, "prazo": None}
+        assert ativas == {"mensais": [], "prazos": []}
 
     def test_progresso_passa_de_cem_por_cento(self, cliente, ano_corrente, conta):
         """Guardar mais que o alvo é informação, não erro — não trunca em 100."""
@@ -235,12 +253,12 @@ class TestMetasPoupanca:
             },
         )
         cliente.post("/metas-poupanca", json={"tipo": "mensal", "valor_alvo": "500"})
-        assert cliente.get("/metas-poupanca/ativas").json()["mensal"]["percentual"] > 100
+        assert cliente.get("/metas-poupanca/ativas").json()["mensais"][0]["percentual"] > 100
 
     def test_ano_corrente_inexistente_nao_quebra(self, cliente):
         """A meta existe mesmo sem nenhum ano criado — progresso é zero."""
         cliente.post("/metas-poupanca", json={"tipo": "mensal", "valor_alvo": "500"})
-        mensal = cliente.get("/metas-poupanca/ativas").json()["mensal"]
+        mensal = cliente.get("/metas-poupanca/ativas").json()["mensais"][0]
         assert mensal["guardado_no_mes"] == "0.00"
         assert mensal["percentual"] == 0.0
 
@@ -469,3 +487,149 @@ class TestAlertas:
 
     def test_exige_sessao(self, cliente_sem_login):
         assert cliente_sem_login.get("/alertas").status_code == 401
+
+
+class TestMetaComNomeEVinculo:
+    """O que o ADR-13 acrescenta: nome livre e vínculo com um desejo.
+
+    O vínculo aponta da meta para o item, e não o contrário — mesmo sentido de
+    `Caixinha.meta_id` (ADR-10): o mais específico aponta para o mais geral.
+    """
+
+    @pytest.fixture()
+    def desejo(self, cliente, ano_corrente):
+        return cliente.post(
+            f"/anos/{data_de_hoje().year}/wishlist",
+            json={"desejo": "Tenis", "valor": "600"},
+        ).json()
+
+    def test_meta_nasce_sem_nome_e_sem_vinculo(self, cliente):
+        meta = cliente.post(
+            "/metas-poupanca", json={"tipo": "mensal", "valor_alvo": "500"}
+        ).json()
+        assert meta["nome"] is None
+        assert meta["wishlist_item_id"] is None
+
+    def test_cria_com_nome_e_vinculo(self, cliente, desejo):
+        meta = cliente.post(
+            "/metas-poupanca",
+            json={
+                "tipo": "prazo",
+                "nome": "Tenis novo",
+                "valor_alvo": "600",
+                "data_alvo": "2030-12-31",
+                "wishlist_item_id": desejo["id"],
+            },
+        ).json()
+        assert meta["nome"] == "Tenis novo"
+        assert meta["wishlist_item_id"] == desejo["id"]
+
+    def test_o_progresso_tambem_traz_nome_e_vinculo(self, cliente, desejo):
+        """A tela de Wishlist casa item e meta por este campo, sem endpoint novo."""
+        cliente.post(
+            "/metas-poupanca",
+            json={
+                "tipo": "prazo",
+                "nome": "Tenis novo",
+                "valor_alvo": "600",
+                "data_alvo": "2030-12-31",
+                "wishlist_item_id": desejo["id"],
+            },
+        )
+        prazo = cliente.get("/metas-poupanca/ativas").json()["prazos"][0]
+        assert prazo["nome"] == "Tenis novo"
+        assert prazo["wishlist_item_id"] == desejo["id"]
+
+    def test_item_inexistente_e_recusado(self, cliente):
+        resposta = cliente.post(
+            "/metas-poupanca",
+            json={"tipo": "mensal", "valor_alvo": "500", "wishlist_item_id": 9999},
+        )
+        assert resposta.status_code == 422
+        assert "wishlist" in resposta.json()["detail"]
+
+    def test_apagar_o_desejo_solta_o_vinculo_mas_nao_a_meta(self, cliente, desejo):
+        """`SET NULL`, não `CASCADE`: o dinheiro guardado continua guardado.
+
+        Some a etiqueta de para que era, não a meta nem o progresso.
+        """
+        ano = data_de_hoje().year
+        meta = cliente.post(
+            "/metas-poupanca",
+            json={
+                "tipo": "prazo",
+                "valor_alvo": "600",
+                "data_alvo": "2030-12-31",
+                "wishlist_item_id": desejo["id"],
+            },
+        ).json()
+
+        assert cliente.delete(f"/anos/{ano}/wishlist/{desejo['id']}").status_code == 204
+
+        ainda = [m for m in cliente.get("/metas-poupanca").json() if m["id"] == meta["id"]]
+        assert len(ainda) == 1
+        assert ainda[0]["ativa"] is True
+        assert ainda[0]["wishlist_item_id"] is None
+
+    def test_varias_metas_podem_apontar_para_o_mesmo_desejo(self, cliente, desejo):
+        """Sem `UNIQUE`, como várias caixinhas podem apontar para a mesma meta."""
+        for nome in ("Parte do Gui", "Minha parte"):
+            cliente.post(
+                "/metas-poupanca",
+                json={
+                    "tipo": "prazo",
+                    "nome": nome,
+                    "valor_alvo": "300",
+                    "data_alvo": "2030-12-31",
+                    "wishlist_item_id": desejo["id"],
+                },
+            )
+
+        prazos = cliente.get("/metas-poupanca/ativas").json()["prazos"]
+        assert {p["nome"] for p in prazos} == {"Parte do Gui", "Minha parte"}
+        assert all(p["wishlist_item_id"] == desejo["id"] for p in prazos)
+
+    def test_o_filtro_que_a_tela_de_wishlist_vai_fazer(self, cliente, desejo):
+        """O ADR resolve o vínculo no cliente: filtrar por `wishlist_item_id`."""
+        cliente.post(
+            "/metas-poupanca",
+            json={
+                "tipo": "prazo",
+                "valor_alvo": "600",
+                "data_alvo": "2030-12-31",
+                "wishlist_item_id": desejo["id"],
+            },
+        )
+        cliente.post("/metas-poupanca", json={"tipo": "mensal", "valor_alvo": "500"})
+
+        ativas = cliente.get("/metas-poupanca/ativas").json()
+        do_item = [
+            m
+            for m in ativas["mensais"] + ativas["prazos"]
+            if m["wishlist_item_id"] == desejo["id"]
+        ]
+        assert len(do_item) == 1
+
+    def test_varias_metas_do_mesmo_tipo_tem_progresso_independente(
+        self, cliente, ano_corrente, conta
+    ):
+        """Cada meta mede o próprio alvo — o guardado é o mesmo, o percentual não."""
+        hoje = data_de_hoje()
+        for valor_alvo in ("200", "400"):
+            cliente.post(
+                "/metas-poupanca",
+                json={"tipo": "mensal", "valor_alvo": valor_alvo},
+            )
+        cliente.post(
+            f"/anos/{hoje.year}/lancamentos",
+            json={
+                "data": hoje.isoformat(),
+                "valor": "200.00",
+                "tipo": "guardado",
+                "conta_id": conta["id"],
+            },
+        )
+
+        mensais = cliente.get("/metas-poupanca/ativas").json()["mensais"]
+        por_alvo = {m["valor_alvo"]: m["percentual"] for m in mensais}
+        assert por_alvo == {"200.00": 100.0, "400.00": 50.0}

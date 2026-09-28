@@ -8,7 +8,10 @@ from __future__ import annotations
 
 from collections.abc import Generator
 
-from sqlalchemy import create_engine
+import sqlite3
+
+from sqlalchemy import create_engine, event
+from sqlalchemy.engine import Engine
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 from app.config import settings
@@ -24,6 +27,26 @@ connect_args = (
 )
 
 engine = create_engine(settings.database_url, connect_args=connect_args, future=True)
+
+
+@event.listens_for(Engine, "connect")
+def _ligar_chaves_estrangeiras(conexao, _registro) -> None:
+    """O SQLite ignora chave estrangeira se ninguém pedir.
+
+    Sem isto, `ON DELETE SET NULL`, `CASCADE` e `RESTRICT` não fazem nada aqui
+    e fazem tudo no Postgres de produção — a pior divergência possível, porque
+    a suíte passa e o comportamento real é outro. Foi assim que o `SET NULL` do
+    vínculo meta↔wishlist (ADR-13) passou despercebido até alguém escrever o
+    teste que o cobrava.
+
+    Registrado no `Engine` genérico, e não nesta `engine`: os testes criam a
+    própria engine por arquivo de banco descartável, e precisam da mesma regra
+    — senão o problema continua, só que escondido.
+    """
+    if isinstance(conexao, sqlite3.Connection):
+        cursor = conexao.cursor()
+        cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.close()
 SessionLocal = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
 
 

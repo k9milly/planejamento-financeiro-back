@@ -709,6 +709,14 @@ interface TotalWishlist { total_marcado: string; total_geral: string; quantidade
   Dashboard). A integração troca a constante mock por essa soma, sem
   precisar de nenhum endpoint novo.
 
+**Atualização (ADR-13):** esse "Total guardado" continua existindo do jeito
+que está (reserva geral, sem mudança), mas deixa de ser o único número da
+tela — ver seção 17 para o vínculo com metas de poupança (progresso por
+item, e um segundo card no rodapé só com o que está guardado nas metas
+vinculadas). Ver também seção 19 para os três ajustes de UI pedidos nesta
+rodada (mensagem "Desejo adicionado" que não sumia, layout mobile da lista
+em pé, nomes de mês por extenso).
+
 ---
 
 ## 11. Calendário de Vencimentos (componente embutido no Dashboard)
@@ -753,6 +761,14 @@ interface UsuarioAtualizar {
 ```
 
 ### Meta de poupança
+
+> **Superado em parte pelo ADR-13 (seção 17):** a restrição "no máximo uma
+> instância ativa por tipo" abaixo **não vale mais** — várias metas mensais
+> e várias com prazo podem estar ativas ao mesmo tempo, cada uma podendo
+> opcionalmente se vincular a um item da wishlist. O formato de
+> `MetaPoupancaCriar` e o de `GET /metas-poupanca/ativas` mudam — ver seção
+> 17 para o contrato atualizado. O texto original abaixo fica só como
+> registro histórico do que o ADR-06 decidiu primeiro.
 
 Duas formas simultâneas possíveis: uma meta mensal recorrente e uma meta
 com prazo, cada uma com no máximo uma instância ativa por vez. Criar uma
@@ -1271,6 +1287,205 @@ Uma categoria sem limite (`null`) continua aparecendo normalmente em
 
 ---
 
+## 17. Metas de poupança viram lista, com vínculo opcional à wishlist (ADR-13)
+
+Ver `docs/adr/ADR-13-*.md` para o raciocínio completo. Reverte parte do
+ADR-06: deixa de existir o limite de "uma meta ativa por tipo".
+
+```ts
+interface MetaPoupancaCriar {
+  tipo: "mensal" | "prazo";
+  nome?: string;                      // novo, opcional — rótulo livre
+  valor_alvo: string;
+  data_alvo?: string | null;          // obrigatório quando tipo="prazo"
+  wishlist_item_id?: number | null;   // novo, opcional — id de um ItemWishlist
+}
+
+interface ProgressoMetaMensalOut {
+  id: number;
+  nome: string | null;
+  wishlist_item_id: number | null;
+  valor_alvo: string;
+  guardado_no_mes: string;
+  percentual: number;
+}
+interface ProgressoMetaPrazoOut {
+  id: number;
+  nome: string | null;
+  wishlist_item_id: number | null;
+  valor_alvo: string;
+  data_alvo: string;
+  guardado_acumulado: string;
+  percentual: number;
+  dias_restantes: number;
+}
+// GET /metas-poupanca/ativas — mesma rota, corpo muda de par nulável pra listas:
+interface MetasAtivasOut {
+  mensais: ProgressoMetaMensalOut[];   // era `mensal: ProgressoMetaMensalOut | null`
+  prazos: ProgressoMetaPrazoOut[];     // era `prazo: ProgressoMetaPrazoOut | null`
+}
+```
+
+- `POST /metas-poupanca` não aposenta mais a meta anterior do mesmo tipo —
+  cria uma nova, independente. `wishlist_item_id`, se enviado, precisa
+  apontar pra um item que existe (`422` se não existir).
+- `DELETE /metas-poupanca/{id}` continua igual — desativa por id, nunca
+  apaga de verdade.
+- **Tela `/metas` e `MetaPoupancaSection.tsx`** (mesmo componente, usado
+  também em Configurações → Perfil): passam de dois blocos fixos
+  (mensal/prazo) pra duas listas. O formulário de nova meta ganha "Nome
+  (opcional)" e um `<select>` "Vincular a um item da wishlist (opcional)",
+  populado com os itens não comprados do ano corrente (`GET
+  /anos/{ano}/wishlist`, mesmo hook que a tela de Wishlist usa).
+- **Tela `/wishlist`:** passa a buscar também `GET /metas-poupanca/ativas`.
+  Pra cada item, filtra `[...mensais, ...prazos].filter(m =>
+  m.wishlist_item_id === item.id)` (sem endpoint novo, sem N+1) e mostra o
+  progresso de cada meta vinculada na própria linha do item — meta `prazo`
+  mostra `guardado_acumulado / valor_alvo`; meta `mensal` mostra
+  `guardado_no_mes / valor_alvo` com o rótulo "guardado este mês" (são
+  medidas diferentes, não somar as duas). O card "Total guardado" do
+  rodapé (seção 10) continua como está; um card novo, "Guardado nas metas
+  vinculadas", soma só `guardado_acumulado` das metas tipo `prazo`
+  vinculadas a itens não comprados do ano corrente.
+
+---
+
+## 18. Parcelamento no cartão de crédito, com juros opcional (ADR-14)
+
+Ver `docs/adr/ADR-14-*.md` para o raciocínio completo, inclusive a tabela
+dos três modos de cálculo (sem juros / com juros por valor da parcela / com
+juros por taxa %) e a justificativa de usar juros simples em vez da Tabela
+Price.
+
+```ts
+interface CompraParceladaCriar {
+  descricao: string;
+  conta_id: number;
+  categoria_id?: number;
+  data_primeira_parcela: string;         // YYYY-MM-DD
+  numero_parcelas: number;               // 2..24
+  tem_juros: boolean;
+  modo_juros?: "valor" | "percentual";   // obrigatório se tem_juros=true
+  valor_total?: string;                  // obrigatório se !tem_juros ou modo_juros="percentual"
+  valor_parcela?: string;                // obrigatório se modo_juros="valor"
+  taxa_juros_pct?: string;               // obrigatório se modo_juros="percentual"
+}
+interface CompraParceladaOut {
+  id: number;
+  descricao: string;
+  numero_parcelas: number;
+  tem_juros: boolean;
+  modo_juros: "valor" | "percentual" | null;
+  taxa_juros_pct: string | null;
+  valor_parcela: string;
+  valor_total: string;
+  parcelas: LancamentoOut[];             // as N linhas já geradas, uma por mês
+}
+```
+
+- `POST /anos/{ano}/compras-parceladas` — gera as N linhas de `Lancamento`
+  de uma vez (não sob demanda). Cria silenciosamente os anos que faltarem
+  pras parcelas futuras (zero saldos iniciais); `422` se algum ano de
+  destino já existir arquivado.
+- `DELETE /anos/{ano}/compras-parceladas/{id}` — apaga o grupo; em cascata,
+  remove as parcelas que ainda existirem como lançamento, em qualquer ano.
+- Uma parcela isolada continua sendo editável/excluível pelo
+  `PATCH`/`DELETE /anos/{ano}/lancamentos/{id}` que já existe — nenhuma
+  regra nova ali; editar uma parcela não recalcula as outras.
+- **Formulário de novo lançamento:** com `forma_pagamento=crédito`, ganha
+  um alternador "Parcelar" (desligado por padrão). Ligado: número de
+  parcelas (campo numérico com botões `−`/`+` **visíveis na tela**, não as
+  setinhas nativas do `<input type="number">` — o Safari/iOS as esconde
+  completamente, e o uso é majoritariamente mobile), alternador "Tem
+  juros?", e os campos condicionais da tabela do ADR-14 conforme o modo
+  escolhido.
+- **Tela de Lançamentos:** mostra "3/10" nos lançamentos que têm
+  `numero_parcela`/`compra_parcelada_id` preenchidos, com ação "Excluir
+  compra inteira" ao lado da exclusão individual já existente.
+
+---
+
+## 19. Ajustes de UI pedidos nesta rodada — sem endpoint novo
+
+Três ajustes puramente de frontend, sem nenhuma mudança de contrato com o
+backend.
+
+### Layout da Wishlist no mobile em pé
+
+A linha de cada item (`wishlist.tsx`) hoje é um único `flex` horizontal sem
+nenhum breakpoint — checkbox, nome truncado, badge de importância, valor de
+largura fixa (`w-28`) e três ícones de ação, todos na mesma linha. Num
+celular em pé (~360–400px de largura) isso não cabe: o nome trunca cedo
+demais e os ícones de ação ficam espremidos ou cortados.
+
+Abaixo do breakpoint `sm` (Tailwind, ~640px), a linha vira duas linhas
+dentro do mesmo item: nome + badge de importância na primeira, valor +
+ações na segunda (ou um layout de cartão empilhado, ao critério de quem
+implementar — o requisito é: nome do desejo nunca trunca de um jeito que
+esconda a informação principal, e os três botões de ação (marcar
+comprado/editar/excluir) continuam com alvo de toque de pelo menos 40×40px
+cada). Acima de `sm`, mantém a linha única atual.
+
+### Toast "Desejo adicionado" com tempo pra sumir e X pra fechar
+
+O `Toaster` global (`components/ui/sonner.tsx`, montado em
+`routes/__root.tsx`) não define `duration` nem `closeButton` hoje — herda o
+padrão da biblioteca (Sonner), que é 4000ms e sem botão de fechar visível.
+Se na prática o toast está ficando na tela indefinidamente, o motivo não
+está nesse componente (vale confirmar em runtime antes de mexer, pode ser
+uma interação específica de mobile/PWA). De qualquer forma, o pedido é
+tornar o comportamento **explícito** em vez de depender do padrão
+implícito da biblioteca:
+
+```tsx
+<Sonner
+  duration={4000}
+  closeButton
+  toastOptions={{ ... /* classNames já existentes, sem mudança */ }}
+  {...props}
+/>
+```
+
+`closeButton` adiciona um X clicável em todo toast do app (não só
+"Desejo adicionado" — é uma prop global do `Toaster`, não dá pra ligar só
+numa mensagem específica sem duplicar o componente). Isso já cobre "poder
+fechar antes se preferir".
+
+### Nomes dos meses por extenso
+
+`MONTHS` (`lib/finance-data.ts`) hoje é `["Jan", "Fev", ..., "Dez"]` e
+alimenta: o `<select>` de mês no `AppShell` (troca livre, `<option>` não
+tem limite de largura), os títulos/subtítulos de várias telas (troca
+livre), os cabeçalhos da Tabela Dinâmica (já dentro de uma tabela
+`overflow-x-auto` com `min-w-[1000px]` — já rola horizontalmente, nome
+completo só aumenta um pouco a largura que já rola) e o eixo X do gráfico
+de barras do Dashboard (`routes/index.tsx`, `<XAxis dataKey="mes"
+fontSize={12}>`, sem rotação nem espaçamento pra 12 rótulos longos).
+
+Decisão (confirmada com a Kamilly): `MONTHS` vira nomes completos em todo
+lugar —
+
+```ts
+export const MONTHS = [
+  "Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho",
+  "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro",
+];
+```
+
+— **exceto** o eixo do gráfico do Dashboard, que ganha um array próprio só
+pra esse uso:
+
+```ts
+export const MONTHS_ABREVIADOS = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"];
+```
+
+`routes/index.tsx` troca `MONTHS[m.mes - 1]` por `MONTHS_ABREVIADOS[m.mes - 1]`
+só na construção do array `monthly` que alimenta o `<XAxis dataKey="mes">`
+— o `subtitle` da mesma tela (`${MONTHS[month - 1]} de ${year}`) continua
+usando `MONTHS` (nome completo), sem mudança.
+
+---
+
 ## Resumo — todos os endpoints usados por esta integração
 
 | Método | Rota | Usado por |
@@ -1285,11 +1500,12 @@ Uma categoria sem limite (`null`) continua aparecendo normalmente em
 | `GET`/`POST`/`PATCH`/`DELETE`/`{gasto_id}/meses/{mes}/pagar`/`.../desfazer` | `/anos/{ano}/gastos-fixos` | Gastos Fixos, Calendário de Vencimentos |
 | `GET`/`POST`/`PATCH`/`DELETE`, `GET .../total` | `/anos/{ano}/wishlist` | Wishlist |
 | `PATCH` | `/auth/eu` | Perfil → nome, preferência de alerta por e-mail (seção 12, ADR-06) |
-| `GET`/`POST`/`DELETE` | `/metas-poupanca`, `GET /metas-poupanca/ativas` | Perfil e `/metas` → meta de poupança real (seção 12, ADR-06) |
+| `GET`/`POST`/`DELETE` | `/metas-poupanca`, `GET /metas-poupanca/ativas` | Perfil e `/metas` → meta de poupança real (seção 12, ADR-06; corpo de `/ativas` e payload de criação mudam na seção 17, ADR-13) |
 | `GET` | `/alertas` | Painel de alertas de vencimento (seção 12, ADR-06) |
 | `POST` | `/anos/{ano}/importacao/previa`, `/anos/{ano}/importacao/confirmar` | Tela de importação de extrato — CSV/XLSX/OFX (seção 13, ADR-08). Já implementado para os três formatos e em produção; o caminho antigo `/ofx/...` responde `404` |
 | `GET`/`POST`/`DELETE` | `/regras` | Sugestão automática de categoria na importação (seção 13) — já existe, não tinha entrado nesta tabela antes por não ser consumido por nenhuma tela até agora |
 | `GET`/`POST`/`PATCH`/`DELETE` | `/contas/{conta_id}/caixinhas`, `POST .../transferir` | Tela nova de Investimentos (seção 15, ADR-10) |
+| `POST`/`DELETE` | `/anos/{ano}/compras-parceladas` | Parcelamento no crédito, novo endpoint (seção 18, ADR-14) — ainda não implementado |
 
 Todos os endpoints das seções 1–11 já existiam e foram conferidos linha a
 linha contra o código real do backend — nenhum precisou ser criado para
@@ -1299,4 +1515,8 @@ nome, meta de poupança e alertas de vencimento. Os da seção 13
 tela em si é nova no frontend. `budgets` (orçamento por categoria, dentro
 da tela `/metas`) deixou de ficar fora de escopo — o ADR-11 reverte o
 `ADR-0007` do repositório back; ver seção 16 (sem endpoint novo, só
-campos a mais em `/categorias` e `/auth/eu`, que já existiam).
+campos a mais em `/categorias` e `/auth/eu`, que já existiam). A seção 17
+(ADR-13) muda o formato de dois endpoints que já existem, sem criar
+nenhum novo. A seção 18 (ADR-14) é o único domínio desta rodada com
+endpoint genuinamente novo (`/anos/{ano}/compras-parceladas`). A seção 19
+(ajustes de UI) não toca em nenhum endpoint.
