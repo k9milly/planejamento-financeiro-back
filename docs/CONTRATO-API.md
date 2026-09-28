@@ -425,6 +425,10 @@ Se o ano corrente ainda não foi criado, devolve lista vazia.
 | `POST`/`PATCH` | `/anos/{ano}/lancamentos` | alterado — `caixinha_id`, `caixinha_destino_id`, tipo `transferencia_caixinha` | idem |
 | `GET`/`POST`/`PATCH` | `/categorias` | alterado — `limite_mensal` | ADR-11 |
 | `GET`/`PATCH` | `/auth/eu` | alterado — `mostrar_orcamento_categoria` | idem |
+| `GET` | `/metas-poupanca/ativas` | alterado — **quebra o front**: par nulável vira duas listas | ADR-13 |
+| `POST` | `/metas-poupanca` | alterado — `nome`, `wishlist_item_id`; não aposenta mais a anterior | idem |
+| `POST`/`DELETE` | `/anos/{ano}/compras-parceladas` | **novo** | ADR-14 |
+| `POST`/`PATCH` | `/anos/{ano}/lancamentos` | alterado — `compra_parcelada_id`, `numero_parcela` na saída | idem |
 
 ---
 
@@ -553,6 +557,70 @@ usuária abre o app em mais de um aparelho.
 
 Contrato completo na seção 16 de
 `docs/specs/especificacao-tecnica-funcional.md`.
+
+---
+
+## Metas viram lista, com vínculo à wishlist (ADR-13)
+
+**Mudança que quebra o frontend.** `GET /metas-poupanca/ativas` continua na
+mesma rota, mas o corpo deixou de ser um par nulável:
+
+```
+antes:  { mensal: ProgressoMensal | null, prazo: ProgressoPrazo | null }
+agora:  { mensais: ProgressoMensal[],     prazos: ProgressoPrazo[] }
+```
+
+Listas vazias quando não há meta do tipo — a ausência deixou de ser caso
+especial. Os dois tipos continuam separados de propósito: `guardado_no_mes` é
+fluxo do mês e `guardado_acumulado` é estoque; somar um com o outro daria um
+número sem significado, e a separação no schema é o que impede a tela de fazer
+isso por descuido.
+
+`MetaPoupancaCriar`, `MetaPoupancaOut` e os dois schemas de progresso ganham
+`nome` (texto livre, opcional) e `wishlist_item_id` (opcional; `422` se o item
+não existir). Apagar o desejo **não** apaga a meta — só zera o vínculo.
+
+`POST /metas-poupanca` **não aposenta mais** a meta anterior do mesmo tipo.
+Desativar passou a ser só por `DELETE /metas-poupanca/{id}`.
+
+O vínculo item↔meta é resolvido no cliente, sem endpoint novo: a tela já busca
+as duas listas e filtra por `wishlist_item_id`.
+
+---
+
+## Compra parcelada no cartão (ADR-14)
+
+```
+POST   /anos/{ano}/compras-parceladas         → 201 CompraParceladaOut
+DELETE /anos/{ano}/compras-parceladas/{id}    → 204
+```
+
+Cada parcela é um `Lancamento` comum, e as N nascem **todas de uma vez** — uma
+parcela de cartão é dívida já assumida, não um compromisso a confirmar mês a
+mês. `LancamentoOut` ganha `compra_parcelada_id` e `numero_parcela` (nulos em
+todo lançamento comum), que é de onde sai o "3/10" da tela.
+
+Três combinações válidas na criação, e só três:
+
+| `tem_juros` | `modo_juros` | o que vem preenchido |
+| --- | --- | --- |
+| `false` | ausente | `valor_total` (o preço da compra) |
+| `true` | `"valor"` | `valor_parcela` (o que o cartão já mostra) |
+| `true` | `"percentual"` | `valor_total` (à vista) + `taxa_juros_pct` |
+
+Mandar um campo que não pertence ao modo é `422` — aceitar e ignorar em
+silêncio faria a pessoa achar que informou um juro que nunca foi usado.
+
+**Atenção ao `valor_total`:** na entrada do modo percentual é o preço à vista;
+na saída é sempre a **soma efetiva das parcelas**, com juros. São números
+diferentes com o mesmo nome.
+
+`conta_id` precisa ser `cartao_credito` (`422` se não for). Anos que faltarem
+para as parcelas futuras são criados sozinhos, zerados; se algum já existir
+**arquivado**, a compra inteira é recusada com `422` e nada é gravado.
+
+Editar ou apagar **uma** parcela continua sendo `PATCH`/`DELETE
+/anos/{ano}/lancamentos/{id}`, sem regra nova — e não recalcula as outras.
 
 ---
 

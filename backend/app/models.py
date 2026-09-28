@@ -119,6 +119,18 @@ class Importancia(str, enum.Enum):
     ALTA = "alta"
 
 
+class ModoJuros(str, enum.Enum):
+    """Como a pessoa informou os juros de uma compra parcelada (ADR-14).
+
+    `VALOR` é o número que o próprio cartão já mostra ("10x de R$ 105,32") —
+    sem conta financeira nenhuma, só multiplicação, e por isso exato.
+    `PERCENTUAL` é a taxa ao mês, com o sistema calculando por juros simples.
+    """
+
+    VALOR = "valor"
+    PERCENTUAL = "percentual"
+
+
 class TipoMetaPoupanca(str, enum.Enum):
     """As duas formas de querer poupar, que respondem a perguntas diferentes.
 
@@ -383,6 +395,21 @@ class Lancamento(Base):
         ForeignKey("caixinhas.id", ondelete="RESTRICT"), nullable=True
     )
 
+    # De qual compra parcelada esta linha é uma parcela (ADR-14). Nulo em todo
+    # lançamento comum, que é a esmagadora maioria.
+    #
+    # `CASCADE` aqui é intencional e diferente do `RESTRICT` das caixinhas:
+    # apagar a compra é a ação "desfazer a compra inteira", e as parcelas só
+    # existem por causa dela. Apagar **uma** parcela continua sendo o
+    # `DELETE /anos/{ano}/lancamentos/{id}` de sempre.
+    compra_parcelada_id: Mapped[int | None] = mapped_column(
+        ForeignKey("compras_parceladas.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
+    # Qual parcela esta é, começando em 1 — o "3" de "3/10".
+    numero_parcela: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
     # Identificador da transação no extrato do banco (FITID do OFX). Preenchido
     # só em lançamentos importados; é o que impede que reimportar o mesmo
     # extrato duplique tudo. Único por ano, não global: bancos diferentes podem
@@ -534,6 +561,11 @@ class MetaPoupanca(Base):
     Global, como o resto do domínio financeiro (`Ano`, `Conta`, `Categoria`):
     quem é por usuário aqui é só a preferência de tela, não o dinheiro.
 
+    **Várias metas do mesmo tipo podem estar ativas ao mesmo tempo** (ADR-13).
+    O ADR-06 limitava a uma por tipo, porque meta era um hábito genérico
+    ("guardar X por mês"); virou objetivo específico — juntar para um tênis e
+    para um curso são duas metas, com progressos que não se somam.
+
     O progresso não é guardado em coluna nenhuma — é recalculado a partir do
     `guardado` que `services/calculos.py` já apura. Guardar um número
     derivado abriria a porta para ele divergir da fonte.
@@ -556,6 +588,26 @@ class MetaPoupanca(Base):
     tipo: Mapped[TipoMetaPoupanca] = mapped_column(
         Enum(TipoMetaPoupanca, native_enum=False), nullable=False, index=True
     )
+
+    # Rótulo livre, só para diferenciar metas do mesmo tipo (ADR-13). Opcional
+    # porque quem tem uma meta só não precisa nomeá-la — a interface cai num
+    # rótulo genérico, como sempre fez.
+    nome: Mapped[str | None] = mapped_column(String(60), nullable=True)
+
+    # Para qual item da wishlist esta meta está juntando dinheiro (ADR-13).
+    # É a meta que aponta para o objetivo, seguindo o mesmo sentido de
+    # `Caixinha.meta_id` (ADR-10): o mais específico aponta para o mais geral.
+    #
+    # `SET NULL` e não `CASCADE`: apagar o desejo não pode apagar a meta junto,
+    # porque o dinheiro guardado continua guardado — só perde a etiqueta.
+    #
+    # A meta é global e o item pertence a um ano; o vínculo atravessa essa
+    # fronteira de propósito, já que juntar dinheiro para uma compra não se
+    # interrompe na virada do ano.
+    wishlist_item_id: Mapped[int | None] = mapped_column(
+        ForeignKey("wishlist.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+
     valor_alvo: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False)
     # Só para `tipo=PRAZO`; obrigatoriamente nulo em `MENSAL`.
     data_alvo: Mapped[date | None] = mapped_column(Date, nullable=True)
@@ -635,6 +687,71 @@ class Caixinha(Base):
 
     conta: Mapped["Conta"] = relationship()
     meta: Mapped["MetaPoupanca | None"] = relationship()
+
+
+class CompraParcelada(Base):
+    """Uma compra no crédito dividida em parcelas (ADR-14).
+
+    É o **molde**, como `GastoFixo` é o molde do gasto fixo — mas com uma
+    diferença que muda tudo: aqui as N parcelas nascem **todas de uma vez**, na
+    criação. Um gasto fixo pode variar ou ser pulado num mês; uma parcela de
+    cartão é dívida já assumida no ato da compra. Esconder as futuras até
+    "confirmar" cada uma esconderia um compromisso que já existe — o oposto do
+    saldo inteligente que motivou o ADR-0002.
+
+    Por isso nada aqui é somado por `services/calculos.py`: cada parcela é um
+    `Lancamento` comum, e a fatura continua sendo a soma dos lançamentos de
+    crédito, como sempre foi (ADR-0003).
+
+    Não tem `ano_id`: as parcelas atravessam anos, e cada uma carrega o seu.
+    """
+
+    __tablename__ = "compras_parceladas"
+    __table_args__ = (
+        # Teto de 24: cobre o uso comum de cartão brasileiro e evita que um
+        # erro de digitação ("240" no lugar de "24") gere centenas de
+        # lançamentos e anos criados por engano.
+        CheckConstraint(
+            "numero_parcelas BETWEEN 2 AND 24", name="ck_compra_parcelada_numero"
+        ),
+        CheckConstraint("valor_parcela > 0", name="ck_compra_parcelada_valor_parcela"),
+        CheckConstraint("valor_total > 0", name="ck_compra_parcelada_valor_total"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    descricao: Mapped[str] = mapped_column(String(120), nullable=False)
+    conta_id: Mapped[int] = mapped_column(
+        ForeignKey("contas.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
+    categoria_id: Mapped[int | None] = mapped_column(
+        ForeignKey("categorias.id", ondelete="SET NULL"), nullable=True
+    )
+    numero_parcelas: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    tem_juros: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=false()
+    )
+    modo_juros: Mapped[ModoJuros | None] = mapped_column(
+        Enum(ModoJuros, native_enum=False), nullable=True
+    )
+    # Só no modo percentual. Guardado para a tela poder mostrar como o número
+    # foi obtido — o cálculo em si já está congelado em `valor_parcela`.
+    taxa_juros_pct: Mapped[float | None] = mapped_column(Numeric(5, 2), nullable=True)
+
+    # O valor de cada parcela, já calculado. Quando a divisão não é exata, a
+    # última parcela é maior — ela absorve os centavos que sobram, e por isso
+    # este campo é "o valor da parcela comum", não necessariamente o de todas.
+    valor_parcela: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False)
+    # A soma efetiva das parcelas — **com** juros, quando houver. Não é o preço
+    # à vista que a pessoa digitou no modo percentual.
+    valor_total: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False)
+
+    criada_em: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, server_default=func.now()
+    )
+
+    conta: Mapped["Conta"] = relationship()
+    categoria: Mapped["Categoria | None"] = relationship()
 
 
 class FaturaMensal(Base):

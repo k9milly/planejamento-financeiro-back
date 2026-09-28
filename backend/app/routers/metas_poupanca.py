@@ -13,7 +13,14 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models import Ano, Caixinha, Lancamento, MetaPoupanca, TipoMetaPoupanca
+from app.models import (
+    Ano,
+    Caixinha,
+    ItemWishlist,
+    Lancamento,
+    MetaPoupanca,
+    TipoMetaPoupanca,
+)
 from app.routers.anos import totais_do_ano
 from app.services.caixinhas import saldos
 from app.services.tempo import data_local, hoje as hoje_local
@@ -50,23 +57,20 @@ def listar(
     "",
     response_model=MetaPoupancaOut,
     status_code=status.HTTP_201_CREATED,
-    summary="Cria uma meta (e aposenta a anterior do mesmo tipo)",
+    summary="Cria uma meta",
 )
 def criar(dados: MetaPoupancaCriar, db: Session = Depends(get_db)) -> MetaPoupanca:
-    """No máximo uma meta ativa por tipo.
+    """Quantas metas quiser, de qualquer tipo, ao mesmo tempo (ADR-13).
 
-    Criar substitui a anterior em vez de recusar: quem define uma meta nova
-    está dizendo que a antiga não vale mais, e obrigar a desativar antes seria
-    um passo a mais para dizer a mesma coisa. A antiga vira `ativa=False`, não
-    é apagada.
+    O ADR-06 aposentava a meta anterior do mesmo tipo ao criar uma nova. Fazia
+    sentido quando meta era um hábito genérico — ter dois "guardar X por mês"
+    seria contraditório. Virou objetivo específico: juntar para um tênis e para
+    um curso são duas metas que convivem, e aposentar uma ao criar a outra
+    apagaria o progresso de algo que a pessoa não desistiu.
+
+    Desativar continua existindo, por id, em `DELETE /metas-poupanca/{id}`.
     """
-    anterior = (
-        db.query(MetaPoupanca)
-        .filter(MetaPoupanca.tipo == dados.tipo, MetaPoupanca.ativa.is_(True))
-        .all()
-    )
-    for meta in anterior:
-        meta.ativa = False
+    _validar_item_wishlist(dados.wishlist_item_id, db)
 
     meta = MetaPoupanca(**dados.model_dump())
     db.add(meta)
@@ -93,8 +97,14 @@ def ativas(db: Session = Depends(get_db)) -> MetasAtivasOut:
     meses = totais_do_ano(ano_ref, db) if ano_ref else None
 
     return MetasAtivasOut(
-        mensal=_progresso_mensal(_ativa(TipoMetaPoupanca.MENSAL, db), meses, hoje, db),
-        prazo=_progresso_prazo(_ativa(TipoMetaPoupanca.PRAZO, db), hoje, db),
+        mensais=[
+            _progresso_mensal(meta, meses, hoje, db)
+            for meta in _ativas(TipoMetaPoupanca.MENSAL, db)
+        ],
+        prazos=[
+            _progresso_prazo(meta, hoje, db)
+            for meta in _ativas(TipoMetaPoupanca.PRAZO, db)
+        ],
     )
 
 
@@ -104,8 +114,11 @@ def ativas(db: Session = Depends(get_db)) -> MetasAtivasOut:
     summary="Desativa uma meta",
 )
 def desativar(meta_id: int, db: Session = Depends(get_db)) -> None:
-    """Nunca apaga de verdade: a meta vira histórico, como acontece ao ser
-    substituída por outra do mesmo tipo."""
+    """Nunca apaga de verdade: a meta vira histórico.
+
+    Desde o ADR-13 este é o **único** jeito de uma meta sair do ar — criar
+    outra do mesmo tipo não aposenta mais a anterior.
+    """
     meta = db.get(MetaPoupanca, meta_id)
     if meta is None:
         raise HTTPException(
@@ -116,13 +129,26 @@ def desativar(meta_id: int, db: Session = Depends(get_db)) -> None:
     db.commit()
 
 
-def _ativa(tipo: TipoMetaPoupanca, db: Session) -> MetaPoupanca | None:
+def _ativas(tipo: TipoMetaPoupanca, db: Session) -> list[MetaPoupanca]:
+    """Todas as metas em vigor do tipo, da mais recente para a mais antiga."""
     return (
         db.query(MetaPoupanca)
         .filter(MetaPoupanca.tipo == tipo, MetaPoupanca.ativa.is_(True))
-        .order_by(MetaPoupanca.criada_em.desc())
-        .first()
+        .order_by(MetaPoupanca.criada_em.desc(), MetaPoupanca.id.desc())
+        .all()
     )
+
+
+def _validar_item_wishlist(item_id: int | None, db: Session) -> None:
+    """O desejo precisa existir. Não precisa ser do ano corrente: juntar
+    dinheiro para uma compra não se interrompe na virada do ano."""
+    if item_id is None:
+        return
+    if db.get(ItemWishlist, item_id) is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=f"O item {item_id} não existe na wishlist.",
+        )
 
 
 def _caixinhas_da_meta(meta: MetaPoupanca, db: Session) -> list[Caixinha]:
@@ -152,8 +178,8 @@ def _percentual(guardado: Decimal, alvo: Decimal) -> float:
 
 
 def _progresso_mensal(
-    meta: MetaPoupanca | None, meses, hoje: date, db: Session
-) -> ProgressoMetaMensalOut | None:
+    meta: MetaPoupanca, meses, hoje: date, db: Session
+) -> ProgressoMetaMensalOut:
     """Com caixinha vinculada, mede só o que entrou nela **neste mês**.
 
     O saldo da caixinha não serve aqui: uma meta mensal pergunta quanto entrou
@@ -161,9 +187,6 @@ def _progresso_mensal(
     anteriores marcaria a meta de janeiro como cumprida sem que nada tivesse
     sido guardado em janeiro.
     """
-    if meta is None:
-        return None
-
     vinculadas = _caixinhas_da_meta(meta, db)
     if vinculadas:
         guardado = variacao_do_guardado(
@@ -180,6 +203,8 @@ def _progresso_mensal(
 
     return ProgressoMetaMensalOut(
         id=meta.id,
+        nome=meta.nome,
+        wishlist_item_id=meta.wishlist_item_id,
         valor_alvo=meta.valor_alvo,
         guardado_no_mes=guardado,
         percentual=_percentual(guardado, meta.valor_alvo),
@@ -187,8 +212,8 @@ def _progresso_mensal(
 
 
 def _progresso_prazo(
-    meta: MetaPoupanca | None, hoje: date, db: Session
-) -> ProgressoMetaPrazoOut | None:
+    meta: MetaPoupanca, hoje: date, db: Session
+) -> ProgressoMetaPrazoOut:
     """Conta só o que foi guardado **desde que a meta foi criada**.
 
     Usar o saldo da reserva aqui daria a uma meta recém-criada o progresso de
@@ -200,9 +225,6 @@ def _progresso_prazo(
     data do lançamento — `Lancamento` não guarda hora, então tudo o que foi
     lançado no dia em que a meta nasceu conta para ela.
     """
-    if meta is None:
-        return None
-
     vinculadas = _caixinhas_da_meta(meta, db)
     if vinculadas:
         # Com caixinha vinculada o saldo dela **é** o acumulado da meta, então
@@ -227,6 +249,8 @@ def _progresso_prazo(
 
     return ProgressoMetaPrazoOut(
         id=meta.id,
+        nome=meta.nome,
+        wishlist_item_id=meta.wishlist_item_id,
         valor_alvo=meta.valor_alvo,
         data_alvo=meta.data_alvo,
         guardado_acumulado=guardado,

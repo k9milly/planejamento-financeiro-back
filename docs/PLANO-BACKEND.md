@@ -467,6 +467,25 @@ frontend lê na abertura. Atualizei o conjunto em vez de afrouxar a asserção.
 `mostrar_orcamento_categoria` nasce `true` pelo `server_default`, inclusive
 para as linhas que já estão no banco.
 
+**Feito em 25/09/2026.** Saiu como o ADR-14 pede, com os três modos de
+cálculo e o teto de 24 parcelas.
+
+- **`valor_total` entra e sai com significados diferentes.** Na entrada do modo
+  percentual é o preço à vista; na saída é sempre a soma efetiva das parcelas,
+  com juros. Está assim no ADR (o comentário do modelo diz "soma efetiva") e
+  foi implementado assim, mas é um nome só para dois números — registrado aqui
+  porque é o tipo de coisa que confunde quem lê o contrato depois.
+- **A primeira parcela precisa ser do ano da rota.** O ADR diz que `{ano}` é o
+  ano da primeira parcela; sem checar, mandar uma data de outro ano gravaria a
+  compra num ano e as parcelas em outro, sem erro nenhum.
+- **Recusar ano arquivado não grava metade.** A checagem acontece antes de
+  qualquer parcela ser criada, e sem `commit` — o teste confirma que nenhum
+  lançamento sobra.
+
+**Nenhuma mudança em `services/calculos.py`**, como o ADR previa. Há teste
+verificando que a fatura do cartão em março fecha devendo a primeira parcela e
+a de abril, as duas primeiras — sem nenhuma linha nova de cálculo.
+
 ## Fora desta rodada (decisões já registradas nas Partes 1 e 2, não tarefas)
 
 - ~~Nenhum endpoint de orçamento/meta por categoria~~ — **revertido pelo
@@ -478,3 +497,116 @@ para as linhas que já estão no banco.
   explícita depois.
 - Nenhuma mudança em `CORSMiddleware` além da lista de origens (Fase 2) —
   `allow_credentials=True` fica como está, ver nota no ADR-03.
+
+---
+
+## Fase 9 — Metas de poupança viram lista, vínculo com wishlist (ADR-13)
+
+**O quê:** ler o `ADR-13` inteiro antes de codificar — reverte a parte do
+ADR-06 que limitava a uma meta ativa por tipo. Contrato completo na seção
+17 da spec (`docs/specs/especificacao-tecnica-funcional.md`).
+
+- Migração: `metas_poupanca.nome` (`String(60)`, nullable) e
+  `metas_poupanca.wishlist_item_id` (FK `wishlist.id`, `ON DELETE SET NULL`,
+  nullable, indexado). Aditiva, nenhum dado existente muda de
+  comportamento.
+- `routers/metas_poupanca.py::criar()` para de aposentar metas do mesmo
+  tipo — remover só esse trecho, o resto da função continua igual.
+- `routers/metas_poupanca.py::ativas()` passa de `.first()` pra `.all()`
+  na busca de metas ativas de cada tipo, e o `MetasAtivasOut` muda de
+  `{mensal, prazo}` (nuláveis) pra `{mensais: [...], prazos: [...]}`
+  (listas). `_progresso_mensal`/`_progresso_prazo`/`_caixinhas_da_meta`
+  não mudam — continuam operando sobre uma `MetaPoupanca` por chamada, só
+  passam a ser chamadas em loop.
+- `MetaPoupancaCriar`/`MetaPoupancaAtualizar` (schemas.py) ganham
+  `nome?: str` e `wishlist_item_id?: int`. Validar que o item existe
+  quando informado (mesmo padrão de `_validar_conta` em outros routers) —
+  `422` se não existir.
+
+**Critério de aceite:** criar duas metas `prazo` seguidas não desativa a
+primeira (comportamento antigo do ADR-06 não deve mais acontecer). Criar
+uma meta com `wishlist_item_id` de um item que não existe devolve `422`.
+Apagar um item da wishlist que tem meta vinculada não apaga a meta — só
+zera `wishlist_item_id` dela (`SET NULL`).
+
+**Testes a ajustar:** `test_perfil_metas_alertas.py` — os que hoje
+verificam "criar meta do mesmo tipo aposenta a anterior" mudam de
+expectativa (as duas continuam ativas). Testes novos: `wishlist_item_id`
+(criar com vínculo válido, `422` com item inexistente, `SET NULL` ao
+apagar o item), e `GET /metas-poupanca/ativas` devolvendo várias metas do
+mesmo tipo.
+
+**Feito em 25/09/2026.** Saiu como o ADR-13 pede. Três observações:
+
+- **`_progresso_mensal` e `_progresso_prazo` deixaram de aceitar `None`.** O
+  `| None` delas era a forma de dizer "não existe meta deste tipo", e isso
+  virou lista vazia — manter o parâmetro opcional seria carregar um caso que
+  não existe mais.
+- **A ordem de cópia para o Postgres mudou.** `ItemWishlist` subiu para antes
+  de `MetaPoupanca`, porque a meta passou a apontar para o desejo. O
+  `test_copia.py` pegou isso sozinho, pela quarta vez desde que existe.
+- **`MetaPoupancaAtualizar` não existe, e não foi criado** — ver a pendência
+  no fim desta seção.
+
+**Um achado que vale além desta fase:** o `SET NULL` do vínculo não funcionava
+nos testes, e não por causa do ADR — **o SQLite ignora chave estrangeira se
+ninguém pedir**. `PRAGMA foreign_keys` nasce desligado, então `SET NULL`,
+`CASCADE` e `RESTRICT` nunca foram exercidos aqui, enquanto valem integralmente
+no Postgres de produção. É a pior forma de divergência: a suíte passa e o
+comportamento real é outro.
+
+`app/database.py` agora liga o pragma em toda conexão SQLite, registrando no
+`Engine` genérico — os testes criam a própria engine, e prendê-lo só na da
+aplicação deixaria o buraco aberto justamente onde ele importa. Nenhum teste
+existente quebrou com as chaves ligadas, o que é uma boa notícia: as regras já
+estavam certas, só não eram verificadas.
+
+**Pendência de contrato, não resolvida de propósito:** o ADR-13 cita
+`MetaPoupancaAtualizar` nas Consequências, mas **não existe `PATCH
+/metas-poupanca/{id}`** neste backend — nunca existiu, e a seção 17 da spec não
+o descreve. Implementei só o que a spec descreve. Vale decidir: sem PATCH, o
+`nome` e o `wishlist_item_id` só podem ser definidos na criação, e corrigir
+qualquer um dos dois exige desativar a meta e criar outra — perdendo o
+histórico. É a mesma armadilha que o `saldo_inicial` das caixinhas criou (ver
+ADR-10), e que precisou ser desfeita depois.
+
+## Fase 10 — Parcelamento no cartão de crédito (ADR-14)
+
+**O quê:** ler o `ADR-14` inteiro antes de codificar, principalmente a
+tabela dos três modos de cálculo de juros (sem juros / valor da parcela
+digitado / taxa % calculada) — não são intercambiáveis, e a fórmula do
+modo percentual (juros simples) está justificada lá, não reinventar outra.
+Contrato completo na seção 18 da spec.
+
+- Migração: tabela `compras_parceladas` nova (ver modelo completo no
+  ADR-14) + `lancamentos.compra_parcelada_id` (FK, `ON DELETE CASCADE`,
+  nullable, indexado) + `lancamentos.numero_parcela` (Integer, nullable).
+- Endpoint novo `POST /anos/{ano}/compras-parceladas`: valida que
+  `conta_id` é `cartao_credito` (reaproveitar a validação já usada em
+  `lancamentos.py`/`gastos_fixos.py`), calcula `valor_parcela`/`valor_total`
+  conforme o modo, cria os anos que faltarem para as parcelas futuras
+  (mesmo formato de `POST /anos`, sem saldos iniciais — `422` se algum ano
+  de destino já existir arquivado), e gera N `Lancamento` — um por mês, a
+  partir de `data_primeira_parcela`, com o mesmo tratamento de "dia
+  inexistente no mês" que `gastos_fixos.py::pagar()` já usa
+  (`calendar.monthrange`).
+- Endpoint novo `DELETE /anos/{ano}/compras-parceladas/{id}`: apaga o
+  grupo; o `CASCADE` remove as parcelas que ainda existirem como
+  lançamento, em qualquer ano.
+- Nenhuma mudança em `services/calculos.py` — cada parcela é um
+  `Lancamento` comum do ponto de vista do cálculo de saldo/fatura.
+
+**Critério de aceite:** parcelar R$100 em 3x sem juros gera R$33,33 +
+R$33,33 + R$33,34 (a diferença de arredondamento cai na última parcela).
+Parcelar com juros por taxa % bate com a fórmula de juros simples do ADR;
+parcelar com juros por valor de parcela não faz nenhum cálculo financeiro,
+só multiplica. Parcelar 12x a partir de novembro/2026 cria o ano 2027
+sozinho, se ainda não existir. Apagar o grupo remove as parcelas ainda
+não editadas manualmente (idem: parcelas editadas continuam sendo
+apagadas junto, `ON DELETE CASCADE` não distingue).
+
+**Testes a criar:** os três modos de cálculo (incluindo arredondamento),
+criação automática de ano faltante, `422` em ano de destino arquivado,
+`422` em conta que não é cartão, `CASCADE` ao apagar o grupo, e que editar
+uma parcela isolada via `PATCH /anos/{ano}/lancamentos/{id}` continua
+funcionando sem regra nova.

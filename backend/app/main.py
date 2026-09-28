@@ -22,6 +22,7 @@ from app.routers import (
     alertas,
     anos,
     caixinhas,
+    compras_parceladas,
     auth,
     categorias,
     contas,
@@ -156,6 +157,7 @@ app.include_router(contas.router, dependencies=protegido)
 app.include_router(caixinhas.router, dependencies=protegido)
 app.include_router(categorias.router, dependencies=protegido)
 app.include_router(lancamentos.router, dependencies=protegido)
+app.include_router(compras_parceladas.router, dependencies=protegido)
 app.include_router(gastos_fixos.router, dependencies=protegido)
 app.include_router(faturas.router, dependencies=protegido)
 app.include_router(wishlist.router, dependencies=protegido)
