@@ -100,6 +100,8 @@ class TestProtecao:
         ("get", "/contas/1/caixinhas"),
         ("post", "/contas/1/caixinhas"),
         ("post", "/contas/1/caixinhas/transferir"),
+        ("post", "/anos/2026/compras-parceladas"),
+        ("delete", "/anos/2026/compras-parceladas/1"),
     ]
 
     @pytest.mark.parametrize("metodo,rota", ROTAS)

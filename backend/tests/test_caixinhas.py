@@ -501,7 +501,7 @@ class TestVinculoComMeta:
             cliente, conta, "Reserva", saldo_inicial="400.00", meta_id=meta_prazo["id"]
         )
 
-        prazo = cliente.get("/metas-poupanca/ativas").json()["prazo"]
+        prazo = cliente.get("/metas-poupanca/ativas").json()["prazos"][0]
         assert prazo["guardado_acumulado"] == "400.00"
         assert prazo["percentual"] == 40.0
 
@@ -510,7 +510,7 @@ class TestVinculoComMeta:
         guardar(cliente, conta, "900.00")
         criar_caixinha(cliente, conta, "Sem vínculo", saldo_inicial="400.00")
 
-        prazo = cliente.get("/metas-poupanca/ativas").json()["prazo"]
+        prazo = cliente.get("/metas-poupanca/ativas").json()["prazos"][0]
         assert prazo["guardado_acumulado"] == "900.00"
 
     def test_caixinha_desativada_para_de_contar_para_a_meta(
@@ -522,7 +522,7 @@ class TestVinculoComMeta:
         ).json()
         cliente.delete(f"/contas/{conta['id']}/caixinhas/{caixinha['id']}")
 
-        prazo = cliente.get("/metas-poupanca/ativas").json()["prazo"]
+        prazo = cliente.get("/metas-poupanca/ativas").json()["prazos"][0]
         # Volta ao cálculo do ADR-06, sobre o guardado da conta inteira.
         assert prazo["guardado_acumulado"] == "900.00"
 
@@ -534,17 +534,17 @@ class TestVinculoComMeta:
             "/metas-poupanca", json={"tipo": "mensal", "valor_alvo": "500.00"}
         )
         guardar(cliente, conta, "5000.00")
-        meta = cliente.get("/metas-poupanca/ativas").json()["mensal"]
+        meta = cliente.get("/metas-poupanca/ativas").json()["mensais"][0]
         caixinha = criar_caixinha(
             cliente, conta, "Reserva", saldo_inicial="4000.00", meta_id=meta["id"]
         ).json()
 
         # O saldo é 4000, mas nada entrou na caixinha depois de ela existir.
-        mensal = cliente.get("/metas-poupanca/ativas").json()["mensal"]
+        mensal = cliente.get("/metas-poupanca/ativas").json()["mensais"][0]
         assert mensal["guardado_no_mes"] == "0.00"
 
         guardar(cliente, conta, "200.00", caixinha["id"])
-        mensal = cliente.get("/metas-poupanca/ativas").json()["mensal"]
+        mensal = cliente.get("/metas-poupanca/ativas").json()["mensais"][0]
         assert mensal["guardado_no_mes"] == "200.00"
 
     def test_transferencia_entre_caixinhas_da_meta_nao_infla_o_mensal(
@@ -552,7 +552,7 @@ class TestVinculoComMeta:
     ):
         """Realocar não é guardar: o mês não pode ganhar dinheiro por isso."""
         cliente.post("/metas-poupanca", json={"tipo": "mensal", "valor_alvo": "500.00"})
-        meta = cliente.get("/metas-poupanca/ativas").json()["mensal"]
+        meta = cliente.get("/metas-poupanca/ativas").json()["mensais"][0]
         guardar(cliente, conta, "1000.00")
 
         origem = criar_caixinha(
@@ -571,7 +571,7 @@ class TestVinculoComMeta:
             },
         )
 
-        mensal = cliente.get("/metas-poupanca/ativas").json()["mensal"]
+        mensal = cliente.get("/metas-poupanca/ativas").json()["mensais"][0]
         assert mensal["guardado_no_mes"] == "0.00"
 
     def test_meta_desativada_nao_pode_ser_vinculada(self, cliente, ano, conta, meta_prazo):
@@ -1015,5 +1015,5 @@ class TestFusoHorario:
         finally:
             db.close()
 
-        prazo = cliente.get("/metas-poupanca/ativas").json()["prazo"]
+        prazo = cliente.get("/metas-poupanca/ativas").json()["prazos"][0]
         assert prazo["guardado_acumulado"] == "300.00"

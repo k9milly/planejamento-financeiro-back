@@ -31,6 +31,7 @@ from app.models import (
     Ano,
     Caixinha,
     Categoria,
+    CompraParcelada,
     Conta,
     CorFormaPagamento,
     FaturaMensal,
@@ -53,15 +54,17 @@ ORDEM = [
     Ano,
     SaldoInicial,
     RegraCategorizacao,
-    # Antes de `Lancamento`: ele aponta para caixinhas, e a caixinha aponta
-    # para a meta — as três precisam existir na ordem em que se referenciam.
+    # `ItemWishlist` sobe para cá porque a meta passou a apontar para um desejo
+    # (ADR-13), e a cadeia toda precisa existir na ordem em que se referencia:
+    # desejo <- meta <- caixinha <- lançamento.
+    ItemWishlist,
     MetaPoupanca,
     Caixinha,
+    CompraParcelada,
     GastoFixo,
     Lancamento,
     GastoFixoMensal,
     FaturaMensal,
-    ItemWishlist,
     CorFormaPagamento,
 ]
 
