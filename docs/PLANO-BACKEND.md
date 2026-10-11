@@ -610,3 +610,169 @@ criação automática de ano faltante, `422` em ano de destino arquivado,
 `422` em conta que não é cartão, `CASCADE` ao apagar o grupo, e que editar
 uma parcela isolada via `PATCH /anos/{ano}/lancamentos/{id}` continua
 funcionando sem regra nova.
+
+---
+
+## Fase 11 — Espaços financeiros compartilhados e isolamento de dados (ADR-15)
+
+**Por que primeiro, antes de qualquer outra coisa desta leva:** as Fases
+12 e 13 (cadastro aberto, convites, limite de tentativas) dependem de
+"espaço" já existir como conceito — cadastro cria um espaço, convite
+vincula a um. Ler o `ADR-15` inteiro antes de codificar; é a mudança mais
+arriscada do projeto até aqui (acertar errado vaza dado financeiro de uma
+família pra outra), então vale reler duas vezes antes de migrar.
+
+**O quê:**
+
+- Tabelas novas `espacos` e `membros_espaco` (modelo completo no ADR-15).
+- Coluna `espaco_id` em **todas** as catorze tabelas de dado financeiro —
+  sim, até as que já têm `ano_id` (o ADR explica por que não confiar só na
+  cadeia transitiva via `Ano`).
+- Migração de backfill: cria um espaço único, vincula o usuário existente
+  como dono, preenche `espaco_id` de toda linha existente com esse id.
+- `app/espaco.py` novo: o `contextvar` + os dois eventos do SQLAlchemy
+  (`do_orm_execute` pro filtro automático de leitura, `before_flush` pro
+  carimbo automático em linha nova) — é o coração do ADR, não uma
+  escolha de implementação qualquer; ler a seção "Por que no nível da
+  sessão, não em cada router" antes de propor outra abordagem.
+- `deps.py::usuario_atual` passa a fixar o `contextvar` a partir de
+  `usuario.espaco_atual_id`.
+- Endpoints novos: `PATCH /auth/espaco-atual`, `GET`/`PATCH /espacos/{id}`,
+  `GET`/`DELETE /espacos/{id}/membros/{usuario_id}`,
+  `GET /espacos/{id}/exportar`, `DELETE /auth/eu` (os três casos do ADR:
+  dono solo apaga tudo, dono com outros membros é bloqueado, membro só
+  sai).
+- `GET /auth/eu` ganha `espaco_atual_id` e `espacos: EspacoOut[]`.
+
+**Critério de aceite — o que importa mais que qualquer outra coisa nesta
+fase:** criar dois espaços, cada um com um "Ano 2026" e uma "Categoria
+Alimentação" (ids diferentes, nomes iguais, de propósito), logar como
+membro de cada um e confirmar que **nenhum** endpoint de leitura do
+sistema deixa vazar uma linha de um espaço pro outro. Isso precisa ser um
+teste automatizado cobrindo todo router, não uma checagem manual.
+
+**Script administrativo:** `scripts/criar_usuario.py` roda fora de
+contexto de requisição (sem `contextvar` fixado) — precisa criar o espaço
+do usuário novo manualmente, replicando a mesma lógica do cadastro (Fase
+12) nessa escala menor.
+
+**Feito em 11/10/2026.** Saiu como o ADR-15 pede no resultado, e **diferente
+em dois pontos do mecanismo** — os dois descobertos por teste, não por
+leitura:
+
+- **O espaço ativo mora na sessão do banco, não num `ContextVar`.** O ADR
+  propunha `contextvars.ContextVar`, e isso não funciona com o FastAPI: ele
+  roda dependência e endpoint síncronos em chamadas separadas de
+  `anyio.to_thread.run_sync`, cada uma com uma **cópia** do contexto, então o
+  `set()` feito em `usuario_atual` não chega ao endpoint. O sintoma era
+  `NOT NULL constraint failed: contas.espaco_id` em todo `POST`. A `Session` é
+  um objeto só, criado por requisição e entregue aos dois, então o espaço
+  ficou em `db.info` — ver a explicação inteira em `app/espaco.py`.
+- **Usuário autenticado sem espaço não pode cair no "sem filtro".** O ADR
+  manda não filtrar quando não há espaço, o que está certo para script e
+  teste e errado para quem está logado e ainda não escolheu: seria o único
+  estado do sistema em que ver tudo é o padrão. Existe um sentinela
+  (`SEM_ESPACO = -1`) que não casa com linha nenhuma. Falha fechado.
+
+**Cinco restrições de unicidade globais, que o ADR não menciona, tornavam o
+próprio critério de aceite dele impossível.** `anos.ano`, `contas.nome`,
+`categorias.nome` e `regras_categorizacao.padrao` eram únicos no sistema
+inteiro — dois espaços não conseguiriam ter "2026", "Nubank" ou "Alimentação"
+cada um, que é literalmente o que o teste de aceite manda criar. Pior:
+`cores_forma_pagamento` tinha a **forma de pagamento como chave primária**,
+então o primeiro espaço a escolher uma cor de crédito impediria todos os
+outros. As cinco viraram unicidade por espaço, e a última virou chave
+composta.
+
+**A lista de modelos protegidos não é escrita à mão.** O ADR trazia uma tupla
+`MODELOS_COM_ESPACO`. Virou descoberta por herança (`modelos_protegidos()`
+percorre quem herda do mixin `ComEspaco`), porque uma lista é algo que alguém
+precisa lembrar de atualizar na décima quinta tabela — e esquecer significa
+uma tabela sem isolamento, exatamente a falha silenciosa que o módulo existe
+para fechar. A exportação usa a mesma descoberta, então tabela nova entra no
+arquivo exportado sozinha.
+
+**Um achado que vale além desta fase: a varredura de rotas não prova que o
+filtro existe.** O teste de mutação desligou o filtro de leitura só para
+`lancamentos` e **toda a varredura de endpoints continuou verde** — porque as
+rotas de lançamento pedem `/anos/2026/...` e o lançamento alheio fica de fora
+por pertencer ao `Ano` do outro espaço, não porque o filtro funcionou. É a
+proteção transitiva que o ADR decidiu não confiar, dando cobertura a si mesma.
+Quem pega a falha é `TestFiltroDaSessao`, que consulta as catorze tabelas
+direto. **Lição para as próximas fases: teste por rota mede o sistema de hoje;
+só teste no nível do mecanismo mede o mecanismo.**
+
+**Um bug real encontrado pelo teste, em código que já estava em produção:**
+`PUT /preferencias/cores-forma-pagamento/{forma}` usava
+`db.get(CorFormaPagamento, forma)`, e com a chave primária composta isso
+levanta `InvalidRequestError` — a rota responderia `500`. Virou consulta
+filtrada.
+
+**Conferido sobre `db.get`:** metade dos routers lê por chave primária, e
+`db.get` é a única leitura que poderia atalhar o filtro (responde do mapa de
+identidade sem ir ao banco). Confirmado em teste que ele **é** filtrado quando
+a sessão tem espaço fixado antes da primeira leitura — que é o que
+`usuario_atual` garante. O único lugar onde o espaço muda no meio da sessão é
+`GET /espacos/{id}/exportar`, e lá só há `query().all()`, que sempre vai ao
+banco.
+
+**Lacuna de contrato, registrada e não inventada:** a especificação diz que
+remover membro é "só dono", então **não existe "sair do espaço"** por
+iniciativa do membro. Está no `CONTRATO-API.md`.
+
+**Divergência de contrato a resolver com ela:** a seção 20 declara
+`espaco_atual_id: number`, e ele é `number | null` de verdade — fica nulo
+quando a pessoa é removida do espaço que estava vendo. Importa porque, nesse
+estado, toda listagem volta vazia: a tela precisa diferenciar "escolha um
+espaço" de "não tem nada cadastrado".
+
+**Migração:** `d7f3a0c21e58`. O espaço inicial é criado **sempre**, e não só
+quando existe usuário — a primeira versão falhava com
+`NOT NULL constraint failed: _alembic_tmp_contas.espaco_id` porque a migração
+inicial do projeto semeia duas contas, então nem um banco recém-migrado está
+vazio. `upgrade` e `downgrade` conferidos nos dois dialetos.
+
+## Fase 12 — Cadastro aberto, convite para espaço e recuperação de senha (ADR-16)
+
+**Depende da Fase 11 e da Fase 13 em produção ao mesmo tempo** — nenhuma
+das duas sozinha é segura: cadastro aberto sem limite de tentativas é
+convite a abuso.
+
+**O quê:**
+
+- Tabela `tokens_acao` (verificação de e-mail e redefinição de senha,
+  reaproveitando a mesma estrutura — ver ADR-16) e `convites_espaco`.
+- `usuarios.email_verificado` (boolean, default `false`).
+- `POST /auth/cadastro`, `POST /auth/esqueci-senha`,
+  `POST /auth/redefinir-senha`, `POST /auth/reenviar-verificacao`.
+- `POST /espacos/{id}/convites`, `GET /convites/{token}`,
+  `POST /convites/{token}/aceitar`.
+- `app/services/email.py` novo — `enviar_email()` loga o link em vez de
+  enviar de verdade, até a Kamilly configurar um provedor (Resend, SES,
+  etc.). Ver a seção "O envio de e-mail de verdade é a única parte que
+  fica pendente" no ADR — não é um TODO solto, é a forma pretendida de
+  entregar isto por agora.
+
+**Critério de aceite:** cadastro cria o `Usuario` + `Espaco` + `MembroEspaco`
+numa transação só; cadastro com e-mail de convite pendente entra no
+espaço convidado em vez de criar um novo (testar os dois caminhos);
+recuperação de senha nunca revela se o e-mail existe; link de qualquer um
+dos três fluxos aparece no log do servidor, legível, em desenvolvimento.
+
+## Fase 13 — Limite de tentativas em login, cadastro e recuperação (ADR-17)
+
+**O quê:** tabela `tentativas_acesso`, função `verificar_limite`/
+`registrar_tentativa` chamada no início de `login`, `cadastro` e
+`esqueci_senha`. Limite: 5 tentativas por e-mail normalizado **e** por IP
+em 15 minutos, `429` quando excedido, nunca revelando qual dos dois
+limites foi atingido.
+
+**Critério de aceite:** 6ª tentativa errada de login no mesmo e-mail
+dentro de 15 minutos responde `429`; esperar a janela passar libera de
+novo; IPs/e-mails diferentes não se bloqueiam entre si.
+
+**Importante:** sem esta fase em produção, não habilitar `/auth/cadastro`
+nem `/auth/esqueci-senha` publicamente — mesmo que o código da Fase 12
+esteja pronto, os dois endpoints públicos sem limite de tentativas são um
+risco novo que hoje não existe (login sozinho, sem cadastro aberto, tinha
+superfície de ataque menor).

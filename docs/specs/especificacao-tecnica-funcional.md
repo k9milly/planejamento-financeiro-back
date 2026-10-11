@@ -1486,6 +1486,89 @@ usando `MONTHS` (nome completo), sem mudança.
 
 ---
 
+## 20. Espaços financeiros compartilhados e isolamento de dados (ADR-15)
+
+Ver `docs/adr/ADR-15-*.md` para o raciocínio completo — inclusive o
+mecanismo de proteção automática (filtro no nível da sessão do
+SQLAlchemy), que é a parte mais importante do ADR e não tem equivalente
+de contrato HTTP (é interno ao backend).
+
+```ts
+interface EspacoOut { id: number; nome: string; criado_em: string; }
+interface MembroEspacoOut {
+  usuario_id: number; nome: string | null; email: string;
+  papel: "dono" | "membro"; entrou_em: string;
+}
+// PATCH /auth/espaco-atual
+interface EspacoAtualAtualizar { espaco_id: number; }
+// GET /auth/eu ganha os campos:
+interface UsuarioOut {
+  // ...campos já existentes...
+  espaco_atual_id: number;
+  espacos: EspacoOut[];   // todo espaço do qual a pessoa é membro — alimenta o seletor
+}
+// GET /espacos/{id}/membros
+// DELETE /espacos/{id}/membros/{usuario_id} — só dono, não pode remover a si mesmo
+// PATCH /espacos/{id} { nome } — só dono
+// GET /espacos/{id}/exportar — qualquer membro, JSON com tudo do espaço
+// DELETE /auth/eu { senha } — apagar a própria conta (três casos, ver ADR-15)
+```
+
+- Toda tela que lista dado financeiro (praticamente todas) não muda de
+  contrato — o filtro por espaço é automático no backend, nenhuma tela
+  precisa mandar `espaco_id` em lugar nenhum.
+- Tela nova (ou seção em Configurações): seletor de espaço (se a pessoa
+  for membro de mais de um — ver `espacos` em `UsuarioOut`), lista de
+  membros do espaço atual, convidar (seção 21), apagar conta.
+
+## 21. Cadastro aberto, convite para espaço compartilhado e recuperação de senha (ADR-16)
+
+Ver `docs/adr/ADR-16-*.md`. Depende da seção 20 (ADR-15) já estar em
+produção — todo cadastro cria um espaço.
+
+```ts
+// POST /auth/cadastro
+interface CadastroCriar { email: string; senha: string; nome?: string; }
+// Resposta: mesmo TokenOut do login (já loga automaticamente).
+
+// POST /auth/esqueci-senha { email: string; }
+// Sempre 200, mesma resposta exista ou não o e-mail (não revela).
+
+// POST /auth/redefinir-senha { token: string; nova_senha: string; }
+
+// POST /espacos/{id}/convites { email: string; } — só dono
+// POST /convites/{token}/aceitar — pessoa logada
+// GET /convites/{token} — dados do convite (nome do espaço, quem convidou),
+//   pra tela mostrar antes de aceitar/recusar
+```
+
+- Telas novas no frontend: `/cadastro`, `/esqueci-senha`, `/redefinir-senha`,
+  `/convite/$token`. `login.tsx` ganha links para as duas primeiras.
+- `GET /auth/eu` passa a incluir `email_verificado: boolean` — tela mostra
+  um aviso não-bloqueante quando `false`, com botão "reenviar e-mail de
+  verificação" (endpoint `POST /auth/reenviar-verificacao`).
+- **Envio de e-mail real é integração pendente** (ver ADR-16) — até lá, o
+  link de qualquer um dos três fluxos (verificação, convite, redefinição)
+  só aparece no log do servidor. Isso não bloqueia nenhuma tela: quem
+  estiver testando/desenvolvendo copia o link do log manualmente.
+
+## 22. Limite de tentativas em login, cadastro e recuperação de senha (ADR-17)
+
+Ver `docs/adr/ADR-17-*.md`. Nenhum contrato novo visível na tela além de
+uma resposta `429` possível nos três endpoints públicos
+(`/auth/login`, `/auth/cadastro`, `/auth/esqueci-senha`):
+
+```ts
+// 429 Too Many Requests
+// { "detail": "Muitas tentativas. Espere alguns minutos e tente de novo." }
+```
+
+A tela trata `429` como qualquer outro erro (mostra `detail` num toast) —
+nenhum tratamento especial necessário, só não presumir que todo erro desses
+endpoints é `401`/`422` como hoje.
+
+---
+
 ## Resumo — todos os endpoints usados por esta integração
 
 | Método | Rota | Usado por |
@@ -1506,6 +1589,11 @@ usando `MONTHS` (nome completo), sem mudança.
 | `GET`/`POST`/`DELETE` | `/regras` | Sugestão automática de categoria na importação (seção 13) — já existe, não tinha entrado nesta tabela antes por não ser consumido por nenhuma tela até agora |
 | `GET`/`POST`/`PATCH`/`DELETE` | `/contas/{conta_id}/caixinhas`, `POST .../transferir` | Tela nova de Investimentos (seção 15, ADR-10) |
 | `POST`/`DELETE` | `/anos/{ano}/compras-parceladas` | Parcelamento no crédito, novo endpoint (seção 18, ADR-14) — ainda não implementado |
+| `GET`/`PATCH`/`DELETE` | `/espacos/{id}`, `/espacos/{id}/membros`, `/espacos/{id}/exportar` | Espaços financeiros compartilhados (seção 20, ADR-15) — novo |
+| `PATCH` | `/auth/espaco-atual` | Seletor de espaço (seção 20, ADR-15) — novo |
+| `DELETE` | `/auth/eu` | Apagar a própria conta (seção 20, ADR-15) — novo |
+| `POST` | `/auth/cadastro`, `/auth/esqueci-senha`, `/auth/redefinir-senha`, `/auth/reenviar-verificacao` | Cadastro aberto e recuperação de senha (seção 21, ADR-16) — novo |
+| `POST`/`GET` | `/espacos/{id}/convites`, `/convites/{token}`, `/convites/{token}/aceitar` | Convite para espaço compartilhado (seção 21, ADR-16) — novo |
 
 Todos os endpoints das seções 1–11 já existiam e foram conferidos linha a
 linha contra o código real do backend — nenhum precisou ser criado para

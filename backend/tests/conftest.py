@@ -13,7 +13,7 @@ from sqlalchemy.orm import sessionmaker
 
 from app.database import Base, get_db
 from app.main import app
-from app.models import Usuario
+from app.models import Espaco, MembroEspaco, PapelMembro, Usuario
 from app.security import gerar_hash
 
 EMAIL = "teste@exemplo.com"
@@ -45,13 +45,31 @@ def cliente_sem_login(sessao_teste):
     app.dependency_overrides.clear()
 
 
+def criar_usuario_com_espaco(db, email: str, senha: str, nome_espaco: str) -> Usuario:
+    """Um usuário e o espaço dele — desde o ADR-15, um não serve sem o outro.
+
+    Sem espaço, toda consulta de dado financeiro volta vazia (o filtro da
+    sessão usa um sentinela que não casa com nada), então um usuário sem
+    espaço não consegue fazer nada além de ler o próprio perfil.
+    """
+    espaco = Espaco(nome=nome_espaco)
+    db.add(espaco)
+    db.flush()
+
+    registro = Usuario(email=email, senha_hash=gerar_hash(senha), espaco_atual_id=espaco.id)
+    db.add(registro)
+    db.flush()
+
+    db.add(MembroEspaco(espaco_id=espaco.id, usuario_id=registro.id, papel=PapelMembro.DONO))
+    db.commit()
+    return registro
+
+
 @pytest.fixture()
 def usuario(sessao_teste):
     db = sessao_teste()
     try:
-        registro = Usuario(email=EMAIL, senha_hash=gerar_hash(SENHA))
-        db.add(registro)
-        db.commit()
+        criar_usuario_com_espaco(db, EMAIL, SENHA, "Espaco de teste")
         return {"email": EMAIL, "senha": SENHA}
     finally:
         db.close()

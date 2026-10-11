@@ -7,6 +7,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy.orm import Session
 
 from app.database import get_db
+from app.espaco import SEM_ESPACO, fixar_espaco
 from app.models import Ano, Usuario
 from app.security import ler_token
 
@@ -37,6 +38,17 @@ def usuario_atual(
     # Um usuário desativado não pode continuar usando um token já emitido.
     if usuario is None or not usuario.ativo:
         raise nao_autorizado
+
+    # A partir daqui, toda consulta a tabela de dinheiro **nesta sessão** só
+    # enxerga este espaço — ver `app/espaco.py`.
+    #
+    # Fica na sessão, e não num ContextVar: o FastAPI roda dependência e
+    # endpoint síncronos em cópias diferentes do contexto, e o valor não
+    # atravessaria. A sessão é o mesmo objeto nos dois.
+    #
+    # Quem ainda não escolheu espaço recebe `SEM_ESPACO`, não `None`: `None`
+    # desliga o filtro, e "não escolhi nada" não pode significar "vejo tudo".
+    fixar_espaco(db, usuario.espaco_atual_id or SEM_ESPACO)
 
     return usuario
 

@@ -9,6 +9,16 @@ argumentos de linha de comando ficam no histórico do shell e são visíveis par
 outros processos da máquina.
 
 Rodar de novo com um e-mail existente troca a senha dele.
+
+## Por que o script cria um espaço (ADR-15)
+
+Desde o ADR-15, dado financeiro pertence a um espaço, e o filtro automático da
+sessão usa o espaço atual de quem está logado. Um usuário sem espaço entra no
+sistema e não vê nada — toda consulta volta vazia. Então criar usuário sem
+criar espaço produziria uma conta inútil, e o script faz as duas coisas.
+
+Este script roda **fora** de uma requisição HTTP, logo fora do carimbo
+automático de `espaco_id`: aqui o vínculo é escrito na mão, de propósito.
 """
 
 from __future__ import annotations
@@ -18,7 +28,7 @@ import re
 import sys
 
 from app.database import SessionLocal, criar_tabelas
-from app.models import Usuario
+from app.models import Espaco, MembroEspaco, PapelMembro, Usuario
 from app.security import gerar_hash
 
 MINIMO_SENHA = 8
@@ -59,7 +69,28 @@ def main() -> None:
         usuario = sessao.query(Usuario).filter(Usuario.email == email).one_or_none()
 
         if usuario is None:
-            sessao.add(Usuario(email=email, senha_hash=gerar_hash(senha)))
+            # O espaço nasce junto. O nome sai do e-mail só para não pedir mais
+            # uma resposta a quem está criando a conta; dá para renomear depois
+            # em `PATCH /espacos/{id}`.
+            espaco = Espaco(nome=email.split("@")[0][:80])
+            sessao.add(espaco)
+            sessao.flush()
+
+            usuario = Usuario(
+                email=email,
+                senha_hash=gerar_hash(senha),
+                espaco_atual_id=espaco.id,
+            )
+            sessao.add(usuario)
+            sessao.flush()
+
+            sessao.add(
+                MembroEspaco(
+                    espaco_id=espaco.id,
+                    usuario_id=usuario.id,
+                    papel=PapelMembro.DONO,
+                )
+            )
             acao = "criado"
         else:
             usuario.senha_hash = gerar_hash(senha)

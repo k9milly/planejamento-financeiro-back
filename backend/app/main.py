@@ -26,6 +26,7 @@ from app.routers import (
     auth,
     categorias,
     contas,
+    espacos,
     faturas,
     gastos_fixos,
     importacao,
@@ -166,6 +167,10 @@ app.include_router(importacao.router, dependencies=protegido)
 app.include_router(preferencias.router, dependencies=protegido)
 app.include_router(metas_poupanca.router, dependencies=protegido)
 app.include_router(alertas.router, dependencies=protegido)
+# `espacos` traz a própria dependência de autenticação em cada rota, porque
+# `membro_do_espaco` precisa saber quem está logado para decidir o acesso —
+# aqui a sessão não resolve sozinha, ao contrário de todo o resto.
+app.include_router(espacos.router)
 
 
 @app.get("/saude", tags=["infra"], summary="Verificação de saúde")

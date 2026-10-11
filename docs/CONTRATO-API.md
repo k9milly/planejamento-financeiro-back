@@ -624,6 +624,100 @@ Editar ou apagar **uma** parcela continua sendo `PATCH`/`DELETE
 
 ---
 
+## Espaços financeiros e isolamento de dados (ADR-15)
+
+```
+PATCH  /auth/espaco-atual                      → 200 UsuarioOut
+DELETE /auth/eu                   { senha }    → 204
+GET    /espacos/{id}                           → 200 EspacoDetalhe
+PATCH  /espacos/{id}              { nome }     → 200 EspacoOut   (só dono)
+GET    /espacos/{id}/membros                   → 200 MembroOut[]
+DELETE /espacos/{id}/membros/{usuario_id}      → 204             (só dono)
+GET    /espacos/{id}/exportar                  → 200 (JSON com tudo)
+```
+
+**Nenhum endpoint de dado financeiro mudou de forma.** O espaço nunca
+aparece no corpo nem na URL deles: o backend filtra pela sessão de quem
+está logado, e `espaco_id` mandado no corpo de qualquer `*Criar`/`*Atualizar`
+é **ignorado**, não obedecido — tentar mover um registro de espaço por
+`PATCH` não funciona nem dá erro.
+
+`GET /auth/eu` ganhou dois campos:
+
+```ts
+interface UsuarioOut {
+  // ...o que já existia...
+  espaco_atual_id: number | null;
+  espacos: { id: number; nome: string; papel: "dono" | "membro" }[];
+}
+```
+
+**`espaco_atual_id` pode ser `null`** — a seção 20 da especificação o
+declara como `number`, e na prática não é. Fica nulo em dois casos reais: a
+pessoa foi removida do espaço que estava vendo, ou (a partir do ADR-16) acabou
+de se cadastrar e algo falhou no meio. Nesse estado **toda** listagem de dado
+financeiro volta vazia e as rotas por ano respondem `404`. A tela precisa
+distinguir isso de "não tem nada cadastrado": são respostas idênticas com
+significados opostos. Quando `espaco_atual_id` for `null`, o certo é pedir
+para escolher um espaço de `espacos`, não mostrar o app vazio.
+
+### Trocar de espaço
+
+`PATCH /auth/espaco-atual` com `{ "espaco_id": 3 }`. Responde `422` com
+`"Espaço inválido ou você não participa dele."` tanto para id inexistente
+quanto para espaço de outra pessoa — a mensagem não distingue os dois de
+propósito, para não confirmar a existência de espaços alheios.
+
+A troca vale **do próximo pedido em diante**, não para a requisição em curso.
+Depois do `PATCH`, recarregue os dados da tela.
+
+### Pedir um espaço que não é seu responde `404`, não `403`
+
+Em todas as rotas `/espacos/{id}`. Um `403` confirmaria que aquele id existe,
+o que já é informação sobre outra família.
+
+### Exportar
+
+`GET /espacos/{id}/exportar` devolve o espaço inteiro:
+
+```ts
+{
+  espaco:  { id, nome, criado_em },
+  membros: MembroOut[],
+  dados:   { [tabela: string]: object[] }   // as 14 tabelas de dinheiro
+}
+```
+
+Valores monetários saem como **string**, como no resto da API. Funciona para
+qualquer espaço de que a pessoa participe, inclusive um que não seja o ativo.
+
+### Apagar a própria conta
+
+`DELETE /auth/eu` com `{ "senha": "..." }` — a senha de novo, porque a ação é
+irreversível e um token já aberto pode ter sido roubado. Três respostas:
+
+| situação | resposta |
+| --- | --- |
+| dona de um espaço só dela | `204`, e o espaço e todos os dados vão junto, de verdade |
+| dona de um espaço com outras pessoas dentro | `409` com a mensagem pedindo para transferir ou remover os membros |
+| só membro de espaços alheios | `204`, e os espaços continuam para quem ficou |
+
+`401` com senha errada.
+
+### Lacuna conhecida: não existe "sair do espaço"
+
+A especificação diz que remover membro é **só dono**, então um membro não tem
+como sair de um espaço por conta própria — ou o dono o remove, ou ele apaga a
+conta inteira. Não inventei a rota; se "sair do espaço" fizer sentido, é
+decisão de produto e entra como contrato novo.
+
+### `GET /espacos/{id}` traz os membros embutidos
+
+Além da rota `/membros` que a especificação pede. A lista de membros chega
+pelos dois caminhos; use o que for mais conveniente na tela.
+
+---
+
 ## O que este contrato não cobre (de propósito)
 
 Widgets do modo estático que não fazem chamada própria (ex.: "despesas

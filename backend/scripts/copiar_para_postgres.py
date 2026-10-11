@@ -29,6 +29,8 @@ from sqlalchemy.orm import sessionmaker
 from app.config import RAIZ
 from app.models import (
     Ano,
+    Espaco,
+    MembroEspaco,
     Caixinha,
     Categoria,
     CompraParcelada,
@@ -48,7 +50,11 @@ from app.models import (
 # Da tabela sem dependências para a mais dependente. Uma conta precisa existir
 # antes de qualquer lançamento ou saldo apontar para ela.
 ORDEM = [
+    # O espaço vem antes de tudo: desde o ADR-15 ele é dono de toda tabela de
+    # dinheiro, e o próprio usuário aponta para ele (`espaco_atual_id`).
+    Espaco,
     Usuario,
+    MembroEspaco,
     Categoria,
     Conta,
     Ano,
