@@ -26,7 +26,12 @@ from sqlalchemy import (
     func,
     true,
 )
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.orm import (
+    Mapped,
+    declared_attr,
+    mapped_column,
+    relationship,
+)
 
 from app.database import Base
 
@@ -144,7 +149,95 @@ class TipoMetaPoupanca(str, enum.Enum):
     PRAZO = "prazo"
 
 
-class Ano(Base):
+class PapelMembro(str, enum.Enum):
+    """O que distingue quem administra o espaço de quem só o usa (ADR-15).
+
+    **Os dois veem e editam o mesmo dinheiro.** A diferença é só
+    administrativa: convidar, remover membro, renomear e apagar o espaço. É
+    deliberado — o caso real que motivou isto é um casal dividindo o controle
+    financeiro, e "membro só lê" resolveria um problema que ninguém tem, ao
+    custo de uma permissão a mais para errar.
+    """
+
+    DONO = "dono"
+    MEMBRO = "membro"
+
+
+class Espaco(Base):
+    """A unidade de isolamento de dados — não o usuário (ADR-15).
+
+    Isolar por pessoa não modelaria "duas pessoas, os mesmos dados" sem
+    duplicar cada lançamento, o que quebraria a ideia de ser a mesma
+    informação. Um espaço tem uma ou várias pessoas dentro; tudo o que é
+    dinheiro pertence a um espaço.
+    """
+
+    __tablename__ = "espacos"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    nome: Mapped[str] = mapped_column(String(80), nullable=False)
+    criado_em: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, server_default=func.now()
+    )
+
+    membros: Mapped[list["MembroEspaco"]] = relationship(
+        back_populates="espaco", cascade="all, delete-orphan"
+    )
+
+
+class MembroEspaco(Base):
+    """Quem participa de qual espaço, e em que papel."""
+
+    __tablename__ = "membros_espaco"
+    __table_args__ = (
+        UniqueConstraint("espaco_id", "usuario_id", name="uq_membro_espaco_usuario"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    espaco_id: Mapped[int] = mapped_column(
+        ForeignKey("espacos.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    usuario_id: Mapped[int] = mapped_column(
+        ForeignKey("usuarios.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    papel: Mapped[PapelMembro] = mapped_column(
+        Enum(PapelMembro, native_enum=False), nullable=False
+    )
+    entrou_em: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, server_default=func.now()
+    )
+
+    espaco: Mapped["Espaco"] = relationship(back_populates="membros")
+    usuario: Mapped["Usuario"] = relationship(
+        back_populates="participacoes", foreign_keys=[usuario_id]
+    )
+
+
+class ComEspaco:
+    """Mixin: esta tabela guarda dinheiro, logo pertence a um espaço.
+
+    Herdar deste mixin é o **único** jeito de uma tabela entrar no isolamento
+    — `app/espaco.py` descobre os modelos protegidos percorrendo quem herda
+    daqui, em vez de manter uma lista à parte. A diferença importa: uma lista
+    é algo que alguém precisa lembrar de atualizar ao criar a décima quinta
+    tabela, e esquecer significa vazar dinheiro de uma família para outra.
+    Herdando, a tabela nova ou está protegida ou nem compila.
+
+    `CASCADE`: apagar um espaço apaga o que havia dentro dele. É o que o
+    direito ao esquecimento pede, e o motivo de `DELETE /auth/eu` poder ser
+    uma exclusão de verdade em vez de um soft-delete.
+    """
+
+    @declared_attr
+    def espaco_id(cls) -> Mapped[int]:
+        return mapped_column(
+            ForeignKey("espacos.id", ondelete="CASCADE"),
+            nullable=False,
+            index=True,
+        )
+
+
+class Ano(Base, ComEspaco):
     """Um ano-calendário de planejamento, com seus 12 meses.
 
     Ao arquivar um ano ele fica somente-leitura, mas continua acessível — é a
@@ -152,9 +245,14 @@ class Ano(Base):
     """
 
     __tablename__ = "anos"
+    __table_args__ = (
+        # Era `unique=True` global. Dois espaços precisam poder ter 2026 cada
+        # um — é literalmente o primeiro passo do teste de isolamento.
+        UniqueConstraint("espaco_id", "ano", name="uq_ano_por_espaco"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    ano: Mapped[int] = mapped_column(Integer, unique=True, nullable=False)
+    ano: Mapped[int] = mapped_column(Integer, nullable=False)
 
     arquivado: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     arquivado_em: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
@@ -221,6 +319,31 @@ class Usuario(Base):
         Boolean, nullable=False, default=True, server_default=true()
     )
 
+    # Qual espaço esta pessoa está vendo agora — como um seletor de área de
+    # trabalho. Fica no banco, e não no navegador, pelo mesmo motivo das outras
+    # preferências (ADR-11): ela abre de outro aparelho e deve continuar no
+    # mesmo lugar.
+    #
+    # `SET NULL`: apagar um espaço não pode apagar quem participava dele.
+    # Nulo significa "ainda não escolheu", e nesse estado nenhuma consulta de
+    # dado financeiro devolve nada — ver `app/espaco.py`.
+    espaco_atual_id: Mapped[int | None] = mapped_column(
+        ForeignKey("espacos.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    espaco_atual: Mapped["Espaco | None"] = relationship(
+        foreign_keys=[espaco_atual_id]
+    )
+
+    # Os espaços de que esta pessoa participa. `foreign_keys` é obrigatório
+    # aqui: `membros_espaco` aponta para `usuarios` e `usuarios` aponta para
+    # `espacos`, e sem dizer por qual caminho ir o SQLAlchemy não tem como
+    # escolher.
+    participacoes: Mapped[list["MembroEspaco"]] = relationship(
+        back_populates="usuario",
+        cascade="all, delete-orphan",
+        foreign_keys="MembroEspaco.usuario_id",
+    )
+
     # Como o usuário arrumou os blocos do painel. Texto opaco de propósito: é
     # JSON gerado e lido só pelo frontend, e o backend não tem nada a decidir
     # sobre o conteúdo — validar o formato aqui obrigaria a mudar o backend
@@ -232,7 +355,7 @@ class Usuario(Base):
     layout_dashboard: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
-class Conta(Base):
+class Conta(Base, ComEspaco):
     """Uma conta de verdade: Nubank, Mercado Pago, dinheiro em espécie.
 
     Cada conta guarda duas carteiras — o saldo disponível e a reserva. A reserva
@@ -250,10 +373,12 @@ class Conta(Base):
             "dia_vencimento_fatura IS NULL OR dia_vencimento_fatura BETWEEN 1 AND 31",
             name="ck_conta_dia_vencimento_fatura",
         ),
+        # Era global: duas famílias não conseguiriam ter um "Nubank" cada.
+        UniqueConstraint("espaco_id", "nome", name="uq_conta_por_espaco"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    nome: Mapped[str] = mapped_column(String(60), unique=True, nullable=False)
+    nome: Mapped[str] = mapped_column(String(60), nullable=False)
     cor: Mapped[str] = mapped_column(String(7), nullable=False, default="#8d7799")
     # Controla a ordem de exibição; a conta principal fica em primeiro.
     ordem: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
@@ -276,7 +401,7 @@ class Conta(Base):
     )
 
 
-class SaldoInicial(Base):
+class SaldoInicial(Base, ComEspaco):
     """Quanto havia em uma conta antes do primeiro lançamento de um ano.
 
     Fica separado de `Conta` porque é um valor por ano: cada ano tem sua própria
@@ -302,7 +427,7 @@ class SaldoInicial(Base):
     ano_ref: Mapped["Ano"] = relationship(back_populates="saldos_iniciais")
 
 
-class Categoria(Base):
+class Categoria(Base, ComEspaco):
     """Categoria de gasto. Global (não pertence a um ano) para que os relatórios
     por categoria possam ser comparados entre anos."""
 
@@ -312,10 +437,13 @@ class Categoria(Base):
             "limite_mensal IS NULL OR limite_mensal > 0",
             name="ck_categoria_limite_positivo",
         ),
+        # Era global — e "Alimentação" nos dois espaços é o segundo passo do
+        # teste de isolamento do ADR-15.
+        UniqueConstraint("espaco_id", "nome", name="uq_categoria_por_espaco"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    nome: Mapped[str] = mapped_column(String(60), unique=True, nullable=False)
+    nome: Mapped[str] = mapped_column(String(60), nullable=False)
     cor: Mapped[str] = mapped_column(String(7), nullable=False, default="#94a3b8")
     ativa: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
 
@@ -338,7 +466,7 @@ class Categoria(Base):
     lancamentos: Mapped[list["Lancamento"]] = relationship(back_populates="categoria")
 
 
-class Lancamento(Base):
+class Lancamento(Base, ComEspaco):
     """Uma movimentação individual: o coração da planilha."""
 
     __tablename__ = "lancamentos"
@@ -432,7 +560,7 @@ class Lancamento(Base):
     )
 
 
-class GastoFixo(Base):
+class GastoFixo(Base, ComEspaco):
     """Despesa recorrente (aluguel, internet, dízimo...).
 
     É um *modelo*: não movimenta dinheiro sozinho. A cada mês ele pode gerar um
@@ -475,7 +603,7 @@ class GastoFixo(Base):
     )
 
 
-class GastoFixoMensal(Base):
+class GastoFixoMensal(Base, ComEspaco):
     """Situação de um gasto fixo em um mês específico (pago/pendente)."""
 
     __tablename__ = "gastos_fixos_mensais"
@@ -502,7 +630,7 @@ class GastoFixoMensal(Base):
     gasto_fixo: Mapped["GastoFixo"] = relationship(back_populates="meses")
 
 
-class RegraCategorizacao(Base):
+class RegraCategorizacao(Base, ComEspaco):
     """Regra que sugere categoria a partir da descrição do extrato.
 
     O usuário ensina uma vez ("iFood é Comida") e as importações seguintes já
@@ -514,11 +642,15 @@ class RegraCategorizacao(Base):
     """
 
     __tablename__ = "regras_categorizacao"
+    __table_args__ = (
+        # Era global: um espaço ensinar "IFOOD" impediria o outro de ensinar.
+        UniqueConstraint("espaco_id", "padrao", name="uq_regra_por_espaco"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     # Trecho procurado na descrição, sem acento e em maiúsculas — a comparação
     # é feita sobre a descrição normalizada da mesma forma.
-    padrao: Mapped[str] = mapped_column(String(120), unique=True, nullable=False)
+    padrao: Mapped[str] = mapped_column(String(120), nullable=False)
     categoria_id: Mapped[int] = mapped_column(
         ForeignKey("categorias.id", ondelete="CASCADE"), nullable=False
     )
@@ -529,7 +661,7 @@ class RegraCategorizacao(Base):
     categoria: Mapped["Categoria"] = relationship()
 
 
-class CorFormaPagamento(Base):
+class CorFormaPagamento(Base, ComEspaco):
     """Cor de exibição de cada forma de pagamento (débito, crédito, pix,
     dinheiro), puramente cosmética.
 
@@ -544,13 +676,23 @@ class CorFormaPagamento(Base):
 
     __tablename__ = "cores_forma_pagamento"
 
+    # Chave primária composta com o espaço. Antes era só a forma de pagamento,
+    # o que daria uma cor de "crédito" para o sistema inteiro: o primeiro
+    # espaço a escolher uma cor impediria todos os outros de escolherem a sua.
+    #
+    # A coluna é redeclarada aqui, em vez de vir do mixin, só para entrar na
+    # chave — a tabela continua herdando `ComEspaco`, e portanto continua
+    # sendo descoberta pelo isolamento automático.
+    espaco_id: Mapped[int] = mapped_column(
+        ForeignKey('espacos.id', ondelete='CASCADE'), primary_key=True, index=True
+    )
     forma_pagamento: Mapped[FormaPagamento] = mapped_column(
         Enum(FormaPagamento, native_enum=False), primary_key=True
     )
     cor: Mapped[str] = mapped_column(String(7), nullable=False)
 
 
-class MetaPoupanca(Base):
+class MetaPoupanca(Base, ComEspaco):
     """Quanto a pessoa quer guardar — por mês, ou até uma data (ADR-06).
 
     É uma entidade e não um campo solto no usuário porque tem ciclo de vida
@@ -619,7 +761,7 @@ class MetaPoupanca(Base):
     )
 
 
-class Caixinha(Base):
+class Caixinha(Base, ComEspaco):
     """Uma divisão nomeada da reserva de uma conta (ADR-10).
 
     A Kamilly guarda dinheiro em caixinhas nomeadas dentro do banco — uma
@@ -689,7 +831,7 @@ class Caixinha(Base):
     meta: Mapped["MetaPoupanca | None"] = relationship()
 
 
-class CompraParcelada(Base):
+class CompraParcelada(Base, ComEspaco):
     """Uma compra no crédito dividida em parcelas (ADR-14).
 
     É o **molde**, como `GastoFixo` é o molde do gasto fixo — mas com uma
@@ -754,7 +896,7 @@ class CompraParcelada(Base):
     categoria: Mapped["Categoria | None"] = relationship()
 
 
-class FaturaMensal(Base):
+class FaturaMensal(Base, ComEspaco):
     """Situação da fatura de um cartão em um mês específico (pago/pendente).
 
     Molde de `GastoFixoMensal`, mas precisa de `ano_id` próprio — diferente de
@@ -789,7 +931,7 @@ class FaturaMensal(Base):
     )
 
 
-class ItemWishlist(Base):
+class ItemWishlist(Base, ComEspaco):
     """Desejo de compra. Não afeta saldo — serve para planejar o uso da reserva."""
 
     __tablename__ = "wishlist"
