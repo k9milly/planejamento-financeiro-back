@@ -144,6 +144,61 @@ def test_migracoes_produzem_o_schema_dos_modelos(tmp_path):
     assert not divergencias, "\n".join(divergencias)
 
 
+def test_migracoes_produzem_as_unicidades_dos_modelos(tmp_path):
+    """Unicidade declarada no modelo precisa existir no banco migrado.
+
+    O teste acima compara colunas, e colunas não são o risco todo: o ADR-15
+    trocou cinco restrições de unicidade de globais para por espaço, e é o
+    tipo de mudança que `create_all` faz certo e uma migração pode deixar
+    passar. Se isso acontecer, a suíte fica verde e produção aceita duas
+    categorias "Alimentação" no mesmo espaço -- ou recusa a segunda família de
+    criar a dela.
+
+    Compara **conjuntos de colunas**, não nomes: o nome da restrição depende
+    do dialeto (no SQLite o Alembic recria a tabela e batiza o que não tinha
+    nome), e o que precisa bater é a regra, não o rótulo.
+    """
+    engine = _banco_migrado(tmp_path)
+    inspetor = sa.inspect(engine)
+
+    divergencias: list[str] = []
+    for nome, tabela in Base.metadata.tables.items():
+        declaradas = {
+            tuple(sorted(c.name for c in restrição.columns))
+            for restrição in tabela.constraints
+            if isinstance(restrição, sa.UniqueConstraint)
+        }
+        declaradas |= {
+            tuple(sorted(c.name for c in indice.columns))
+            for indice in tabela.indexes
+            if indice.unique
+        }
+        declaradas |= {(coluna.name,) for coluna in tabela.columns if coluna.unique}
+
+        no_banco = {
+            tuple(sorted(u["column_names"]))
+            for u in inspetor.get_unique_constraints(nome)
+        }
+        no_banco |= {
+            tuple(sorted(i["column_names"]))
+            for i in inspetor.get_indexes(nome)
+            if i.get("unique")
+        }
+
+        for regra in declaradas - no_banco:
+            divergencias.append(
+                f"{nome}: o modelo exige unicidade em {list(regra)} e a "
+                "migração não criou"
+            )
+        for regra in no_banco - declaradas:
+            divergencias.append(
+                f"{nome}: a migração deixou unicidade em {list(regra)} que o "
+                "modelo não declara mais"
+            )
+
+    assert not divergencias, "\n".join(divergencias)
+
+
 def test_a_regressao_do_enum_seria_detectada(tmp_path):
     """O teste acima precisa pegar de verdade uma coluna curta demais.
 

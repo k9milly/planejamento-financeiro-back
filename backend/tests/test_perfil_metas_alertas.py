@@ -43,17 +43,24 @@ class TestPerfil:
         # O conjunto é travado de propósito: `/auth/eu` é o que o frontend lê
         # na abertura, e um campo entrando ou saindo sem querer passaria
         # despercebido. `mostrar_orcamento_categoria` entrou no ADR-11.
+        # `espaco_atual_id` e `espacos` entraram no ADR-15.
         assert set(corpo) == {
             "id",
             "email",
             "nome",
             "alertas_email_ativo",
             "mostrar_orcamento_categoria",
+            "espaco_atual_id",
+            "espacos",
         }
         # Quem nunca preencheu continua sendo identificado pelo e-mail.
         assert corpo["nome"] is None
         assert corpo["alertas_email_ativo"] is False
         assert corpo["mostrar_orcamento_categoria"] is True
+
+        # Toda pessoa nasce com um espaço, e é nele que ela está (ADR-15).
+        assert corpo["espaco_atual_id"] is not None
+        assert [e["papel"] for e in corpo["espacos"]] == ["dono"]
 
     def test_edita_o_proprio_nome(self, cliente):
         resposta = cliente.patch("/auth/eu", json={"nome": "Kamilly"})

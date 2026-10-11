@@ -13,7 +13,16 @@ from sqlalchemy import create_engine, func, select
 from sqlalchemy.orm import sessionmaker
 
 from app.database import Base
-from app.models import Ano, Conta, Lancamento, TipoLancamento, Usuario
+from app.models import (
+    Ano,
+    Conta,
+    Espaco,
+    Lancamento,
+    MembroEspaco,
+    PapelMembro,
+    TipoLancamento,
+    Usuario,
+)
 from app.security import gerar_hash
 from scripts.copiar_para_postgres import ORDEM, copiar
 
@@ -55,13 +64,28 @@ def _preparar(caminho, com_dados: bool):
 
     if com_dados:
         with Sessao() as s:
-            conta = Conta(id=1, nome="Mercado Pago", cor="#00b1ea", ordem=0)
-            s.add(conta)
-            s.add(Usuario(id=1, email="a@b.com", senha_hash=gerar_hash("x12345678")))
-            s.add(Ano(id=1, ano=2026))
+            # Fora de requisição não há sessão com espaço fixado, então o
+            # carimbo automático não roda — aqui o espaço vai na mão, como
+            # num script administrativo (ADR-15).
+            s.add(Espaco(id=1, nome="Espaco de teste"))
             s.flush()
+
+            conta = Conta(id=1, espaco_id=1, nome="Mercado Pago", cor="#00b1ea", ordem=0)
+            s.add(conta)
+            s.add(
+                Usuario(
+                    id=1,
+                    email="a@b.com",
+                    senha_hash=gerar_hash("x12345678"),
+                    espaco_atual_id=1,
+                )
+            )
+            s.add(Ano(id=1, espaco_id=1, ano=2026))
+            s.flush()
+            s.add(MembroEspaco(espaco_id=1, usuario_id=1, papel=PapelMembro.DONO))
             s.add(
                 Lancamento(
+                    espaco_id=1,
                     ano_id=1,
                     conta_id=1,
                     mes=4,
