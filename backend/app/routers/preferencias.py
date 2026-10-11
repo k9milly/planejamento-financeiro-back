@@ -60,7 +60,15 @@ def definir(
     dados: CorFormaPagamentoDefinir,
     db: Session = Depends(get_db),
 ) -> CorFormaPagamento:
-    registro = db.get(CorFormaPagamento, forma_pagamento)
+    # Consulta filtrada em vez de `db.get`: desde o ADR-15 a chave primária
+    # desta tabela é `(espaco_id, forma_pagamento)`, e `db.get` com um valor só
+    # levanta erro. Buscar pela forma de pagamento basta — o espaço entra pelo
+    # filtro automático da sessão, e o `espaco_id` da linha nova pelo carimbo.
+    registro = (
+        db.query(CorFormaPagamento)
+        .filter(CorFormaPagamento.forma_pagamento == forma_pagamento)
+        .one_or_none()
+    )
     if registro is None:
         registro = CorFormaPagamento(forma_pagamento=forma_pagamento, cor=dados.cor)
         db.add(registro)
