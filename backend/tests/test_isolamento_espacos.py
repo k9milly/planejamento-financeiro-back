@@ -29,6 +29,13 @@ from __future__ import annotations
 
 import pytest
 
+from fastapi.testclient import TestClient
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+
+from app.database import get_db
+from app.espaco import modelos_protegidos
+from app.main import app
 from app.models import Espaco, MembroEspaco, PapelMembro, Usuario
 from app.security import gerar_hash
 from tests.conftest import criar_usuario_com_espaco
@@ -997,3 +1004,183 @@ class TestFiltroDaSessao:
             assert nova.espaco_id == id_a
         finally:
             db.close()
+
+
+# --------------------------------------------------------------------------- #
+# Banco migrado, e não `create_all`
+# --------------------------------------------------------------------------- #
+def _banco_migrado(tmp_path):
+    """Sobe um banco pelas migrações, como a aplicação faz em produção.
+
+    Existe porque o resto da suíte cria as tabelas com `create_all`, e as duas
+    coisas **não** são equivalentes para tudo: o SQLite dispara os cascatas na
+    ordem em que as chaves estrangeiras foram declaradas, e as duas formas
+    declaram em ordens diferentes. Foi exatamente aí que o defeito do
+    `DELETE /auth/eu` se esconde — passava em `create_all` e falhava no banco
+    migrado, que é o que roda de verdade.
+
+    Em subprocesso, e não por `alembic.command`, porque `migracoes/env.py`
+    resolve a URL a partir de `settings.database_url`, já lido quando o teste
+    importou a aplicação.
+    """
+    import os
+    import pathlib
+    import subprocess
+    import sys
+
+    raiz = pathlib.Path(__file__).resolve().parents[1]
+    url = f"sqlite:///{tmp_path / 'migrado.db'}"
+    resultado = subprocess.run(
+        [sys.executable, "-m", "alembic", "upgrade", "head"],
+        cwd=raiz,
+        env={**os.environ, "DATABASE_URL": url},
+        capture_output=True,
+        text=True,
+    )
+    assert resultado.returncode == 0, resultado.stdout + resultado.stderr
+    return create_engine(url, connect_args={"check_same_thread": False})
+
+
+@pytest.fixture()
+def cliente_em_banco_migrado(tmp_path):
+    """Cliente autenticado sobre um banco construído pelas migrações."""
+    engine = _banco_migrado(tmp_path)
+    Sessao = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
+
+    email, senha = "migrado@exemplo.com", "senha-migrada-123"
+    with Sessao() as db:
+        # A migração já cria um espaço e semeia duas contas nele.
+        espaco = db.query(Espaco).one()
+        pessoa = Usuario(
+            email=email, senha_hash=gerar_hash(senha), espaco_atual_id=espaco.id
+        )
+        db.add(pessoa)
+        db.flush()
+        db.add(
+            MembroEspaco(
+                espaco_id=espaco.id, usuario_id=pessoa.id, papel=PapelMembro.DONO
+            )
+        )
+        db.commit()
+        id_espaco = espaco.id
+
+    def _get_db():
+        db = Sessao()
+        try:
+            yield db
+        finally:
+            db.close()
+
+    app.dependency_overrides[get_db] = _get_db
+    with TestClient(app) as base:
+        sessao = _logar(base, email, senha)
+        yield {"sessao": sessao, "Sessao": Sessao, "espaco_id": id_espaco, "senha": senha}
+    app.dependency_overrides.clear()
+
+
+class TestExclusaoEmBancoMigrado:
+    """O defeito que o frontend encontrou, e o teste que faltava.
+
+    `DELETE /auth/eu` respondia **500** quando o espaço tinha uma conta com
+    lançamentos: `espaco_id` é `CASCADE` em toda tabela, então apagar o espaço
+    manda o banco apagar `contas` — e `lancamentos.conta_id` é `RESTRICT`, de
+    propósito, porque apagar conta com lançamento é um engano que o sistema
+    deve recusar. As duas regras estão certas separadas e se contradizem
+    juntas.
+
+    O que mais importa aqui não é o defeito, é **por que ele passou**: o teste
+    equivalente em `create_all` passava, porque a ordem dos cascatas no SQLite
+    vem da ordem de declaração das chaves estrangeiras, e `create_all` e a
+    migração declaram em ordens diferentes. A suíte estava verde por sorte.
+    """
+
+    def test_apaga_conta_com_lancamentos_dentro(self, cliente_em_banco_migrado):
+        from app.models import Conta, Lancamento
+
+        sessao = cliente_em_banco_migrado["sessao"]
+        Sessao = cliente_em_banco_migrado["Sessao"]
+        id_espaco = cliente_em_banco_migrado["espaco_id"]
+
+        assert sessao.post("/anos", json={"ano": ANO}).status_code == 201
+        conta = sessao.post("/contas", json={"nome": "Conta com dados"}).json()
+        criado = sessao.post(
+            f"/anos/{ANO}/lancamentos",
+            json={
+                "mes": 3,
+                "data": f"{ANO}-03-05",
+                "valor": "100.00",
+                "tipo": "saida",
+                "descricao": "mercado",
+                "conta_id": conta["id"],
+            },
+        )
+        assert criado.status_code == 201, criado.text
+        # Uma caixinha também: `caixinhas.conta_id` é RESTRICT pelo mesmo
+        # motivo, e cada uma dessas tabelas barraria o cascata por conta
+        # própria.
+        assert (
+            sessao.post(
+                f"/contas/{conta['id']}/caixinhas", json={"nome": "Reserva"}
+            ).status_code
+            == 201
+        )
+
+        resposta = sessao.delete(
+            "/auth/eu", json={"senha": cliente_em_banco_migrado["senha"]}
+        )
+        assert resposta.status_code == 204, resposta.text
+
+        with Sessao() as db:
+            assert db.get(Espaco, id_espaco) is None
+            # Nada de linha órfã apontando para um espaço que não existe mais.
+            for modelo in modelos_protegidos():
+                sobrou = (
+                    db.query(modelo).filter(modelo.espaco_id == id_espaco).count()
+                )
+                assert sobrou == 0, (
+                    f"{modelo.__tablename__} deixou {sobrou} linha(s) órfã(s)"
+                )
+            assert (
+                db.query(Usuario)
+                .filter(Usuario.email == "migrado@exemplo.com")
+                .one_or_none()
+                is None
+            )
+
+    def test_a_regressao_seria_detectada(self, cliente_em_banco_migrado):
+        """O teste acima só vale se o cascata cru realmente falhar aqui.
+
+        Sem isto, uma mudança que fizesse o `RESTRICT` virar `CASCADE` deixaria
+        o teste de cima passando por outro motivo, e a proteção viraria
+        enfeite.
+        """
+        import sqlalchemy as sa
+        from app.models import Conta, Lancamento
+
+        Sessao = cliente_em_banco_migrado["Sessao"]
+        id_espaco = cliente_em_banco_migrado["espaco_id"]
+        sessao = cliente_em_banco_migrado["sessao"]
+
+        assert sessao.post("/anos", json={"ano": ANO}).status_code == 201
+        conta = sessao.post("/contas", json={"nome": "Conta com dados"}).json()
+        assert (
+            sessao.post(
+                f"/anos/{ANO}/lancamentos",
+                json={
+                    "mes": 3,
+                    "data": f"{ANO}-03-05",
+                    "valor": "100.00",
+                    "tipo": "saida",
+                    "descricao": "mercado",
+                    "conta_id": conta["id"],
+                },
+            ).status_code
+            == 201
+        )
+
+        with Sessao() as db:
+            with pytest.raises(sa.exc.IntegrityError):
+                db.execute(
+                    sa.text("DELETE FROM espacos WHERE id = :i"), {"i": id_espaco}
+                )
+                db.commit()
