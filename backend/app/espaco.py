@@ -143,3 +143,54 @@ def _carimbar_espaco_em_novos(sessao: Session, _contexto, _instancias) -> None:
     for objeto in sessao.new:
         if isinstance(objeto, ComEspaco) and objeto.espaco_id is None:
             objeto.espaco_id = espaco_id
+
+
+def apagar_espaco(db: Session, espaco_id: int) -> None:
+    """Apaga um espaço e tudo que havia dentro dele, na ordem certa.
+
+    ## Por que não basta apagar a linha de `espacos`
+
+    `espaco_id` é `CASCADE` em toda tabela, então `DELETE FROM espacos` parece
+    suficiente — e **não é**. O banco, ao apagar o espaço, apaga `contas`
+    também; e `lancamentos.conta_id` é `RESTRICT`, de propósito, porque apagar
+    uma conta que tem lançamentos é um engano que o sistema deve recusar. O
+    mesmo vale para `gastos_fixos`, `caixinhas` e `compras_parceladas`.
+
+    As duas regras estão certas separadas e se contradizem juntas. Quem resolve
+    é este código, dizendo a ordem: filho antes de pai. O banco não tem como
+    adivinhar que, neste caso, a conta vai embora porque o espaço inteiro vai.
+
+    ## Por que a ordem vem do metadata
+
+    `Base.metadata.sorted_tables` devolve as tabelas em ordem topológica de
+    chave estrangeira — pai antes de filho. Apagar é o caminho inverso, então
+    o laço percorre a lista ao contrário. Assim a ordem sai da estrutura
+    declarada, e não de uma lista escrita à mão que alguém precisaria reordenar
+    ao criar a próxima tabela.
+
+    ## Como este defeito passou pelos testes
+
+    Ele não dependia de dialeto, e sim de **ordem de criação das tabelas**: o
+    SQLite dispara os cascatas na ordem em que as chaves estrangeiras foram
+    declaradas, e `create_all` (que os testes usam) produz uma ordem em que
+    isto funciona, enquanto a migração produz outra em que `contas` é apagada
+    antes de `lancamentos`. A suíte passava por sorte. Depois desta função a
+    ordem deixa de ser do banco e passa a ser nossa, nos dois dialetos — e há
+    teste rodando contra um banco **migrado**, não só contra `create_all`.
+    """
+    protegidas = {modelo.__tablename__ for modelo in modelos_protegidos()}
+    # `membros_espaco` entra junto: o vínculo não é dado financeiro, mas
+    # pertence ao espaço e morre com ele.
+    protegidas.add("membros_espaco")
+
+    # `usuarios` fica de fora de propósito: quem participava do espaço
+    # continua existindo, e `espaco_atual_id` é `SET NULL`.
+    for tabela in reversed(Base.metadata.sorted_tables):
+        if tabela.name in protegidas:
+            db.execute(tabela.delete().where(tabela.c.espaco_id == espaco_id))
+
+    db.execute(
+        Base.metadata.tables["espacos"]
+        .delete()
+        .where(Base.metadata.tables["espacos"].c.id == espaco_id)
+    )

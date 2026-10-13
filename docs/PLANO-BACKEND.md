@@ -716,6 +716,35 @@ a sessão tem espaço fixado antes da primeira leitura — que é o que
 `GET /espacos/{id}/exportar`, e lá só há `query().all()`, que sempre vai ao
 banco.
 
+**Corrigido em 13/10/2026, achado pelo frontend:** `DELETE /auth/eu`
+respondia `500` sempre que o espaço tinha uma conta com lançamentos. `espaco_id`
+é `CASCADE` em toda tabela, então apagar o espaço manda o banco apagar `contas`
+— e `lancamentos.conta_id` é `RESTRICT`, de propósito, porque apagar conta com
+lançamento é um engano que o sistema deve recusar. `gastos_fixos`, `caixinhas` e
+`compras_parceladas` são iguais. As duas regras estão certas separadas e se
+contradizem juntas; quem resolve é `apagar_espaco()`, que apaga filho antes de
+pai usando a ordem topológica de `Base.metadata.sorted_tables`.
+
+**E este é o segundo caso, na mesma fase, de suíte verde por sorte** — vale mais
+que o defeito em si. O teste equivalente existia e passava, porque o SQLite
+dispara os cascatas na ordem em que as chaves estrangeiras foram declaradas, e
+`create_all` (que os testes usam) declara numa ordem em que funciona, enquanto a
+migração declara em outra em que não. O primeiro caso foi a varredura de rotas
+protegida pela cadeia transitiva do `Ano`. Os dois têm a mesma forma: **o teste
+media o arranjo, não o mecanismo.**
+
+O par de lições virou prática: há agora um teste que sobe o banco **pelas
+migrações**, e não por `create_all`, para o caminho de exclusão —
+`TestExclusaoEmBancoMigrado` — com o contrapeso que confirma que o cascata cru
+realmente falha ali, para a proteção não virar enfeite.
+
+**Conferido em produção:** no **Postgres o cascata cru funciona** — a ordem em
+que ele resolve as ações de chave estrangeira é favorável. Então produção nunca
+esteve quebrada por isso; só o SQLite, que é onde o frontend testa. Conferido
+com um espaço descartável, dentro de uma transação desfeita, sem tocar em dado
+real. Depois da correção a ordem é nossa nos dois dialetos, e deixa de depender
+de sorte em qualquer um.
+
 **Lacuna de contrato, registrada e não inventada:** a especificação diz que
 remover membro é "só dono", então **não existe "sair do espaço"** por
 iniciativa do membro. Está no `CONTRATO-API.md`.

@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.deps import usuario_atual
+from app.espaco import apagar_espaco
 from app.models import Espaco, MembroEspaco, PapelMembro, Usuario
 from app.security import conferir_senha, criar_token
 
@@ -266,9 +267,11 @@ def apagar_eu(
     db.delete(usuario)
     db.flush()
 
+    # `apagar_espaco` e não `db.delete(espaco)`: deixar o cascata do banco
+    # resolver falha quando o espaço tem conta com lançamentos, porque o banco
+    # apaga `contas` antes de `lancamentos` e o `RESTRICT` de
+    # `lancamentos.conta_id` barra. Ver a explicação em `app/espaco.py`.
     for espaco_id in espacos_a_apagar:
-        espaco = db.get(Espaco, espaco_id)
-        if espaco is not None:
-            db.delete(espaco)
+        apagar_espaco(db, espaco_id)
 
     db.commit()
