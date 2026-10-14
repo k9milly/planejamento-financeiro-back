@@ -187,6 +187,15 @@ o deploy é abortado em vez de servir com o schema errado.
 fly logs
 ```
 
+**Se a primeira tela depois de um tempo parado der erro:** não deveria mais
+acontecer, mas é bom saber o porquê. O Neon encerra a conexão com o banco
+quando ele fica ocioso, e a máquina no Fly dorme por auto-stop. O pool de
+conexões do SQLAlchemy não é avisado e guarda o socket morto, então a primeira
+requisição depois da pausa estourava com `500` e a seguinte funcionava —
+aparecia como "abri o app, deu erro, recarreguei e foi". Desde 14/10/2026 a
+engine usa `pool_pre_ping`, que testa a conexão antes de usar e troca por uma
+nova em silêncio (`app/database.py`). Se o sintoma voltar, é aí que se olha.
+
 **Backup do banco:** o Neon guarda um histórico que permite voltar o banco a um
 momento anterior. Vale conferir no painel por quantos dias, porque isso varia
 conforme o plano.
