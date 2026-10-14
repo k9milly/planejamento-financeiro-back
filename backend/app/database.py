@@ -21,12 +21,46 @@ class Base(DeclarativeBase):
     pass
 
 
-# check_same_thread só é necessário (e válido) no SQLite.
-connect_args = (
-    {"check_same_thread": False} if settings.database_url.startswith("sqlite") else {}
-)
+def criar_engine(url: str) -> Engine:
+    """A engine da aplicação, numa função para o teste poder construir outra.
 
-engine = create_engine(settings.database_url, connect_args=connect_args, future=True)
+    Sem isto, a única engine seria a do módulo, criada a partir de
+    `settings.database_url` no import — e aí a configuração do pool só poderia
+    ser conferida lendo atributos, nunca exercitada. O defeito que motivou isto
+    (ver `pool_pre_ping` abaixo) é de comportamento, não de valor de atributo.
+    """
+    # check_same_thread só é necessário (e válido) no SQLite.
+    connect_args = {"check_same_thread": False} if url.startswith("sqlite") else {}
+
+    return create_engine(
+        url,
+        connect_args=connect_args,
+        future=True,
+        # Testa a conexão antes de entregá-la, e troca por uma nova se estiver
+        # morta.
+        #
+        # O Postgres de produção é serverless (Neon): ele encerra a conexão
+        # quando o banco fica ocioso, e a máquina no Fly também dorme. O pool
+        # do SQLAlchemy não sabe disso e guarda o socket morto, então a
+        # **primeira** requisição depois de um tempo parado estourava com
+        # `OperationalError` e um `500` — e a seguinte funcionava, porque o pool
+        # já havia descartado a conexão ruim.
+        #
+        # Visto no log de produção em 13/10/2026: `GET /contas` respondeu `500`
+        # na primeira chamada depois de a máquina religar, e `200` em todas as
+        # outras. Para quem usa, aparecia como "abri o app e deu erro, recarreguei
+        # e funcionou" — intermitente, sem causa visível e fácil de culpar a
+        # internet.
+        #
+        # Custa um `SELECT 1` por conexão retirada do pool, o que é barato perto
+        # de uma tela de erro. Não entra `pool_recycle`: o pre-ping já cobre a
+        # conexão encerrada do outro lado, e um tempo fixo de reciclagem seria um
+        # número arbitrário a manter.
+        pool_pre_ping=True,
+    )
+
+
+engine = criar_engine(settings.database_url)
 
 
 @event.listens_for(Engine, "connect")
