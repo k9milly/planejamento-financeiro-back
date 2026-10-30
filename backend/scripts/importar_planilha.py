@@ -28,7 +28,7 @@ from pathlib import Path
 
 import openpyxl
 
-from app.database import SessionLocal, criar_tabelas
+from app.database import SessionLocal, exigir_schema
 from app.models import (
     Ano,
     Categoria,
@@ -269,7 +269,7 @@ def main() -> None:
         print(f"ERRO: arquivo não encontrado: {args.planilha}", file=sys.stderr)
         sys.exit(1)
 
-    criar_tabelas()
+    exigir_schema()
     importar(
         args.planilha, args.ano, args.saldo_conta, args.saldo_guardado, args.simular
     )

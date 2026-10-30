@@ -256,9 +256,9 @@ class TestQuandoNaoDaParaLer:
 
 class TestIdentificador:
     def test_e_estavel_entre_leituras(self):
-        assert [t.fitid for t in ler_pdf(MERCADO_PAGO)] == [
-            t.fitid for t in ler_pdf(MERCADO_PAGO)
-        ]
+        primeira = [t.fitid for t in ler_pdf(MERCADO_PAGO)]
+        segunda = [t.fitid for t in ler_pdf(MERCADO_PAGO)]
+        assert primeira == segunda
 
     def test_sem_id_do_banco_cai_no_sintetico(self):
         """O Nubank não põe identificador no PDF — lá vale o sintético."""

@@ -16,6 +16,16 @@ venv/
 .pytest_cache/
 *.egg-info/
 
+# Cobertura de testes e análise do SonarQube — tudo gerado, nada versionado.
+# O `.scannerwork/` guarda o relatório da última análise e, dependendo da
+# versão do scanner, também um cache de autenticação: manter fora do git é
+# também uma garantia de que nenhum token entra no repositório por acidente.
+coverage.xml
+.coverage
+.coverage.*
+htmlcov/
+.scannerwork/
+
 # Node
 node_modules/
 dist/

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from datetime import datetime
 from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -21,6 +20,7 @@ from app.schemas import (
     SaldoInicialDefinir,
 )
 from app.services.calculos import Carteiras, calcular_ano
+from app.services.tempo import agora
 
 router = APIRouter(prefix="/anos", tags=["anos"])
 
@@ -109,7 +109,7 @@ def arquivar_ano(
     fechamento = {**meses[-1].por_conta, **meses[-1].por_cartao}
 
     ano_ref.arquivado = True
-    ano_ref.arquivado_em = datetime.now()
+    ano_ref.arquivado_em = agora()
 
     proximo = db.query(Ano).filter(Ano.ano == ano_ref.ano + 1).one_or_none()
 

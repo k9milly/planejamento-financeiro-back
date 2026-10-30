@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import enum
 from datetime import date, datetime
+from decimal import Decimal
 
 from sqlalchemy import (
     Boolean,
@@ -420,8 +421,8 @@ class SaldoInicial(Base, ComEspaco):
     conta_id: Mapped[int] = mapped_column(
         ForeignKey("contas.id", ondelete="CASCADE"), nullable=False, index=True
     )
-    saldo: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False, default=0)
-    guardado: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False, default=0)
+    saldo: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False, default=0)
+    guardado: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False, default=0)
 
     conta: Mapped["Conta"] = relationship(back_populates="saldos")
     ano_ref: Mapped["Ano"] = relationship(back_populates="saldos_iniciais")
@@ -459,7 +460,7 @@ class Categoria(Base, ComEspaco):
     # Isto reverte o ADR-0007, que decidira rastrear só o que de fato
     # aconteceu. O gasto real por categoria não muda em nada — já vinha de
     # `gastos_por_categoria`; o que passou a existir é o outro lado da conta.
-    limite_mensal: Mapped[float | None] = mapped_column(
+    limite_mensal: Mapped[Decimal | None] = mapped_column(
         Numeric(12, 2), nullable=True
     )
 
@@ -493,7 +494,7 @@ class Lancamento(Base, ComEspaco):
 
     # Sempre positivo: o sinal é derivado do tipo, nunca do valor. Isso evita a
     # ambiguidade clássica de "-50 do tipo saída" significar entrada.
-    valor: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False)
+    valor: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
     tipo: Mapped[TipoLancamento] = mapped_column(
         Enum(TipoLancamento, native_enum=False), nullable=False, index=True
     )
@@ -577,7 +578,7 @@ class GastoFixo(Base, ComEspaco):
         ForeignKey("anos.id", ondelete="CASCADE"), nullable=False, index=True
     )
     descricao: Mapped[str] = mapped_column(String(120), nullable=False)
-    valor: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False)
+    valor: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
     dia_vencimento: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     # Texto livre digitado antes do enum existir (ex.: "boleto", "débito
     # automático"). Mantido só para exibição do que já estava escrito — nenhuma
@@ -750,7 +751,7 @@ class MetaPoupanca(Base, ComEspaco):
         ForeignKey("wishlist.id", ondelete="SET NULL"), nullable=True, index=True
     )
 
-    valor_alvo: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False)
+    valor_alvo: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
     # Só para `tipo=PRAZO`; obrigatoriamente nulo em `MENSAL`.
     data_alvo: Mapped[date | None] = mapped_column(Date, nullable=True)
     criada_em: Mapped[datetime] = mapped_column(
@@ -813,7 +814,7 @@ class Caixinha(Base, ComEspaco):
     # Editável depois da criação: não é histórico, é rótulo. Mudá-lo não mexe
     # em lançamento nenhum, e as mesmas validações da criação valem na edição
     # (não passar do guardado sem caixinha, não deixar a caixinha negativa).
-    saldo_inicial: Mapped[float] = mapped_column(
+    saldo_inicial: Mapped[Decimal] = mapped_column(
         Numeric(12, 2), nullable=False, default=0, server_default="0"
     )
 
@@ -878,15 +879,15 @@ class CompraParcelada(Base, ComEspaco):
     )
     # Só no modo percentual. Guardado para a tela poder mostrar como o número
     # foi obtido — o cálculo em si já está congelado em `valor_parcela`.
-    taxa_juros_pct: Mapped[float | None] = mapped_column(Numeric(5, 2), nullable=True)
+    taxa_juros_pct: Mapped[Decimal | None] = mapped_column(Numeric(5, 2), nullable=True)
 
     # O valor de cada parcela, já calculado. Quando a divisão não é exata, a
     # última parcela é maior — ela absorve os centavos que sobram, e por isso
     # este campo é "o valor da parcela comum", não necessariamente o de todas.
-    valor_parcela: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False)
+    valor_parcela: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
     # A soma efetiva das parcelas — **com** juros, quando houver. Não é o preço
     # à vista que a pessoa digitou no modo percentual.
-    valor_total: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False)
+    valor_total: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
 
     criada_em: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, server_default=func.now()
@@ -941,7 +942,7 @@ class ItemWishlist(Base, ComEspaco):
         ForeignKey("anos.id", ondelete="CASCADE"), nullable=False, index=True
     )
     desejo: Mapped[str] = mapped_column(String(120), nullable=False)
-    valor: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False, default=0)
+    valor: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False, default=0)
     importancia: Mapped[Importancia] = mapped_column(
         Enum(Importancia, native_enum=False), nullable=False, default=Importancia.MEDIA
     )

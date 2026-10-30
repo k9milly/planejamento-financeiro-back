@@ -34,6 +34,20 @@ def hoje() -> date:
     return datetime.now(FUSO).date()
 
 
+def agora() -> datetime:
+    """O instante atual, em UTC e sem fuso — igual ao que o banco grava.
+
+    Todo carimbo de tempo deste projeto nasce de `server_default=func.now()`,
+    que grava UTC sem fuso tanto no Postgres quanto no SQLite. Um campo
+    preenchido pelo Python com `datetime.now()` sai no fuso **do servidor**:
+    em produção (Fly, UTC) coincide por acaso, e na máquina de quem
+    desenvolve, não — o mesmo campo passa a significar duas coisas conforme
+    onde o processo roda, e `data_local()`, que assume UTC, erra em três
+    horas.
+    """
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
 def data_local(momento: datetime) -> date:
     """A data de um `criada_em` do banco, no fuso de quem usa.
 

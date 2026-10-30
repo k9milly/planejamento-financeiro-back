@@ -93,9 +93,32 @@ def get_db() -> Generator[Session, None, None]:
         db.close()
 
 
-def criar_tabelas() -> None:
-    """Cria o schema. Suficiente enquanto o projeto é local; ao ir para
-    Postgres, trocar por migrações Alembic."""
+def exigir_schema() -> None:
+    """Confere que o banco já foi migrado — e não cria tabela nenhuma.
+
+    Antes isto era `criar_tabelas()`, com `Base.metadata.create_all`. O
+    `app/main.py` explica por que a aplicação parou de fazer isso quando o
+    Alembic entrou: `create_all` cria a tabela que falta e **ignora coluna
+    nova**, então um banco desatualizado passa por bom e só quebra na
+    primeira consulta. Os scripts continuaram chamando, o que era a mesma
+    armadilha pela porta dos fundos.
+
+    Com um agravante próprio: um banco criado por `create_all` nasce sem
+    linha em `alembic_version`, e o primeiro `alembic upgrade head` depois
+    disso falha dizendo que as tabelas já existem — o banco fica num estado
+    que nenhum dos dois caminhos conserta sozinho.
+
+    Levanta `SystemExit` em vez de devolver um booleano porque quem chama são
+    os scripts de linha de comando, e a mensagem é para a pessoa que está no
+    terminal.
+    """
+    from sqlalchemy import inspect
+
     from app import models  # noqa: F401  (registra os modelos no metadata)
 
-    Base.metadata.create_all(bind=engine)
+    if not inspect(engine).has_table("usuarios"):
+        raise SystemExit(
+            "O banco ainda não tem schema.\n"
+            "Rode `python -m alembic upgrade head` antes — é o mesmo comando "
+            "que roda no deploy."
+        )
