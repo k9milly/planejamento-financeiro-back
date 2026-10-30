@@ -1,0 +1,34 @@
+# Cobertura de testes (coverage.py, via pytest-cov).
+#
+# Este arquivo existe por um motivo pontudo: o jeito "óbvio" de medir
+# (`pytest --cov=app`) gera um `coverage.xml` em que os arquivos aparecem como
+# `main.py`, `config.py` - relativos à **pasta medida**, não à raiz da análise.
+# O SonarQube procura esses nomes a partir de onde o
+# `sonar-project.properties` está, não acha nenhum, e **descarta a cobertura
+# sem falhar**: a análise sobe verde e a cobertura aparece como 0% ou não
+# aparece. É a pior forma de erro, a que não reclama.
+#
+# Medindo a partir daqui (`--cov=.`), com as pastas que não são código de
+# aplicação omitidas, os nomes saem como `app/main.py` — que o Sonar resolve
+# direto, sem depender de ele juntar o `<sources>` do XML com o nome do
+# arquivo.
+#
+# `relative_files` tira o caminho absoluto do Windows do relatório. Sem isso o
+# XML carrega `C:\Users\...`, que não significa nada dentro do container do
+# scanner.
+#
+# **Nada aqui muda como os testes rodam.** Sem `--cov` na linha de comando a
+# cobertura não é medida, e `python -m pytest -q` — o que o CI roda — continua
+# idêntico ao que sempre foi.
+[run]
+relative_files = True
+source = .
+omit =
+    # Os testes não se medem.
+    tests/*
+    # Scripts administrativos, rodados à mão e fora de requisição.
+    scripts/*
+    # Migrações são histórico: cada arquivo descreve o banco de um momento no
+    # tempo e não roda de novo depois de aplicado.
+    migracoes/*
+    .venv/*

@@ -24,3 +24,6 @@ email-validator==2.2.0
 # Desenvolvimento
 pytest==8.3.4
 httpx==0.28.1
+# Cobertura de testes, para a análise do SonarQube. Só mede quando se pede
+# `--cov` na linha de comando: não muda nada no `pytest -q` do CI.
+pytest-cov==6.0.0
