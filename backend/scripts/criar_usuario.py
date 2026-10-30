@@ -27,7 +27,7 @@ import getpass
 import re
 import sys
 
-from app.database import SessionLocal, criar_tabelas
+from app.database import SessionLocal, exigir_schema
 from app.models import Espaco, MembroEspaco, PapelMembro, Usuario
 from app.security import gerar_hash
 
@@ -59,7 +59,7 @@ def pedir_senha() -> str:
 
 
 def main() -> None:
-    criar_tabelas()
+    exigir_schema()
 
     email = pedir_email()
     senha = pedir_senha()
