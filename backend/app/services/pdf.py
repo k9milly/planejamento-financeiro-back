@@ -126,8 +126,14 @@ def _le_mercado_pago(linhas: list[str]) -> list[Bruta]:
 # dinheiro não está na linha da transação — está no cabeçalho do dia, que traz
 # "Total de entradas +" ou "Total de saídas -". O valor da transação vem sem
 # sinal nenhum.
+# `\s.*?` e não `\s+.*?`: os dois casam o mesmo texto, porque o `.*?` já
+# absorve espaço — mas com os dois quantificadores disputando os mesmos
+# caracteres, o motor tenta todas as divisões possíveis antes de desistir de
+# uma linha que não traz "Total de". Numa linha com dois mil espaços isso
+# passava de 15 ms para 0 ms ao tirar o `+`. Linha de extrato é curta, então
+# nunca doeu aqui; a troca não tem contrapartida (SonarQube python:S8786).
 _NU_DIA = re.compile(
-    r"^(\d{2})\s+([A-Z]{3})\s+(\d{4})\s+.*?Total de (entradas|sa[íi]das)",
+    r"^(\d{2})\s+([A-Z]{3})\s+(\d{4})\s.*?Total de (entradas|sa[íi]das)",
     re.IGNORECASE,
 )
 _NU_FECHA = re.compile(rf"(?P<valor>{_VALOR})\s*$")

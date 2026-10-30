@@ -166,7 +166,9 @@ class TestXLSX:
 
 class TestIdentificador:
     def test_e_estavel_entre_leituras(self):
-        assert [t.fitid for t in ler_csv(CSV)] == [t.fitid for t in ler_csv(CSV)]
+        primeira = [t.fitid for t in ler_csv(CSV)]
+        segunda = [t.fitid for t in ler_csv(CSV)]
+        assert primeira == segunda
 
     def test_o_mesmo_extrato_em_csv_e_xlsx_gera_o_mesmo_identificador(self):
         """Baixar o extrato nos dois formatos não pode virar lançamento em dobro."""

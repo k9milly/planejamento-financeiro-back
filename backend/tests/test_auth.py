@@ -16,7 +16,9 @@ class TestHashDeSenha:
     def test_mesma_senha_gera_hashes_diferentes(self):
         """O bcrypt embute um sal aleatório: dois hashes iguais denunciariam
         que duas pessoas usam a mesma senha."""
-        assert gerar_hash("igual") != gerar_hash("igual")
+        primeiro = gerar_hash("igual")
+        segundo = gerar_hash("igual")
+        assert primeiro != segundo
 
     def test_confere_a_senha_certa(self):
         assert conferir_senha("certa", gerar_hash("certa"))
