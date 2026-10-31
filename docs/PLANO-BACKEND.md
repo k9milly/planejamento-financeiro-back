@@ -805,3 +805,35 @@ nem `/auth/esqueci-senha` publicamente — mesmo que o código da Fase 12
 esteja pronto, os dois endpoints públicos sem limite de tentativas são um
 risco novo que hoje não existe (login sozinho, sem cadastro aberto, tinha
 superfície de ataque menor).
+
+## Fase 14 — Open finance via Pluggy (ADR-18)
+
+**Estado:** passo 1 implementado (`POST /openfinance/connect-token`); o resto
+depende de credenciais de sandbox.
+
+**O quê, em cinco passos (o ADR-18 tem a tabela e o motivo de cada um):**
+
+1. `POST /openfinance/connect-token` — credenciais só em ambiente, `409` sem
+   espaço escolhido, `503` sem credencial, `502` quando a Pluggy falha.
+   **Feito.**
+2. Tabelas `conexoes_bancarias` e `ContaConectada`/`contas_conectadas` (ambas
+   com `ComEspaco`, logo já isoladas pelo ADR-15) + rotas de listar, apontar
+   para uma `Conta` nossa e desconectar.
+3. Webhook público tratado como **aviso sem conteúdo**: confere o `itemId`
+   contra as nossas conexões, busca as transações na Pluggy com as nossas
+   credenciais e nunca grava nada do corpo recebido.
+4. Transação da Pluggy vira `TransacaoExtrato` e entra na **prévia que já
+   existe** (ADR-08/ADR-12) — dedupe, sugestão de categoria e confirmação em
+   duas etapas de graça. Nada de gravação automática de `Lancamento`.
+5. Renovação de consentimento (widget em modo *update*) e aviso de expiração.
+
+**Critério de aceite:** POST forjado no webhook, com corpo contendo uma
+transação inventada, não cria lançamento nenhum (é o teste que importa);
+transação que chega pela Pluggy e pelo PDF do mesmo banco aparece uma vez só;
+desconectar cancela o item na Pluggy **antes** de apagar a nossa linha, e
+falhar na chamada deles não deixa a linha apagada.
+
+**Importante:** a fase 2 em diante não começa sem credenciais de sandbox. O
+ADR-18 registra por quê — o exemplo de código que motivou a tarefa usava uma
+classe e um método que não existem no SDK oficial, e escrever integração de
+memória é exatamente o que custou aquele retrabalho.

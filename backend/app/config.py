@@ -71,5 +71,25 @@ class Settings(BaseSettings):
     # login toda hora no celular faria a pessoa desistir de usar.
     token_expira_horas: int = 24 * 30
 
+    # --- Pluggy (open finance) --------------------------------------------- #
+    # Credenciais da aplicação na Pluggy. Vazias por padrão: sem elas, a rota
+    # de open finance responde 503 dizendo que não está configurada, em vez de
+    # a aplicação se recusar a subir. É um recurso opcional — quem não usa
+    # banco conectado continua importando extrato por arquivo.
+    #
+    # **Nunca** no código nem no repositório: vêm do ambiente, como a
+    # SECRET_KEY. No Fly, `flyctl secrets set PLUGGY_CLIENT_ID=... `.
+    pluggy_client_id: str = ""
+    pluggy_client_secret: str = ""
+
+    # Separado para os testes apontarem para um servidor falso sem monkeypatch
+    # em módulo, e para um dia poder apontar para o sandbox sem mexer no
+    # código.
+    pluggy_base_url: str = "https://api.pluggy.ai"
+
+    @property
+    def pluggy_configurada(self) -> bool:
+        return bool(self.pluggy_client_id and self.pluggy_client_secret)
+
 
 settings = Settings()

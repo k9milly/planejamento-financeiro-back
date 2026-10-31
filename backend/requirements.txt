@@ -21,9 +21,13 @@ pyjwt==2.10.1
 # Requerido pelo EmailStr do Pydantic.
 email-validator==2.2.0
 
+# Cliente HTTP de saida. Era só de desenvolvimento (o TestClient usa), e
+# passou a ser de execução quando o open finance entrou: o backend chama a
+# API da Pluggy para criar o connect token.
+httpx==0.28.1
+
 # Desenvolvimento
 pytest==8.3.4
-httpx==0.28.1
 # Cobertura de testes, para a análise do SonarQube. Só mede quando se pede
 # `--cov` na linha de comando: não muda nada no `pytest -q` do CI.
 pytest-cov==6.0.0
