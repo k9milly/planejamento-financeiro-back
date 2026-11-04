@@ -120,6 +120,155 @@ def _le_mercado_pago(linhas: list[str]) -> list[Bruta]:
 
 
 # --------------------------------------------------------------------------- #
+# Mercado Pago — fatura do cartão de crédito
+# --------------------------------------------------------------------------- #
+# Documento diferente do extrato em quase tudo, e o que mais importa:
+#
+# * **a data não tem ano** — é `08/09`, dia e mês. O ano sai da data de
+#   emissão da fatura, pela regra do `_data_da_fatura` abaixo;
+# * não há identificador de operação, ao contrário do extrato;
+# * as transações vêm agrupadas por cartão (há dois no mesmo PDF), e cada
+#   grupo fecha com uma linha `Total` que **não** é transação;
+# * a primeira página é resumo e propaganda, cheia de valores em reais (total
+#   a pagar, pagamento mínimo, simulações de parcelamento) que virariam
+#   compras fantasmas se entrassem.
+#
+# O mesmo corte resolve os três últimos: só é transação a linha que
+# **começa** com `dd/mm`. Total, resumo e propaganda não começam.
+_FAT_REFERENCIA = re.compile(
+    r"(?:Emitida em|Vencimento)\s*:?\s*(\d{2})/(\d{2})/(\d{4})", re.IGNORECASE
+)
+# O `\s+` não é decorativo: é ele que separa `08/09 COMPRA` de `13/10/2026`.
+# Numa data completa o caractere seguinte ao mês é `/`, não espaço, então a
+# linha não casa. Com `\s*` no lugar, o vencimento viraria uma compra com o
+# valor que estivesse ao lado — na fatura, o total a pagar.
+_FAT_DATA = re.compile(r"^(\d{2})/(\d{2})\s+(?P<resto>.*)$")
+_FAT_FECHA = re.compile(rf"^(?P<resto>.*?)\s*R\$\s*(?P<valor>{_VALOR})\s*$")
+# Fronteiras de seção. Não é isto que mantém a linha `Total` fora da
+# importação — disso cuida a âncora `dd/mm`, que `Total R$ 292,25` não tem.
+# Isto resolve o caso estreito e feio: uma compra cuja descrição quebrou e
+# **não** fechou com valor deixa uma transação pendente, e sem o corte ela
+# captura o valor da próxima linha — que é justamente o total do cartão.
+_FAT_CORTA = re.compile(r"^(Total\b|Cart[ãa]o\b|Data\s+Movimenta)", re.IGNORECASE)
+
+
+def _referencia_da_fatura(linhas: list[str]) -> date | None:
+    """Data de emissão da fatura — ou, na falta dela, a de vencimento."""
+    for linha in linhas:
+        if achado := _FAT_REFERENCIA.search(linha):
+            dia, mes, ano = (int(g) for g in achado.groups())
+            try:
+                return date(ano, mes, dia)
+            except ValueError:
+                continue
+    return None
+
+
+def _data_da_fatura(dia: int, mes: int, referencia: date) -> date | None:
+    """Devolve o ano que falta na linha da transação.
+
+    A compra é sempre **anterior** à emissão da fatura — é o que a torna parte
+    desta fatura. Então: tenta o ano da referência e, se a data cair no futuro,
+    é do ano anterior.
+
+    Resolve os dois casos reais de uma vez: a parcela de `26/07` numa fatura de
+    outubro fica em julho do mesmo ano, e um `20/12` numa fatura emitida em
+    janeiro volta para dezembro do ano passado — que o "usa o ano da fatura"
+    ingênuo jogaria onze meses para a frente.
+    """
+    for ano in (referencia.year, referencia.year - 1):
+        try:
+            candidata = date(ano, mes, dia)
+        except ValueError:
+            continue  # 29/02 em ano comum; o ano anterior pode servir
+        if candidata <= referencia:
+            return candidata
+    return None
+
+
+def _identificar_compras(brutas: list[Bruta]) -> None:
+    """Dá a cada compra uma chave estável, já que a fatura não traz nenhuma.
+
+    OFX sem `FITID`, CSV e XLSX caem no `identificador_sintetico` (data, valor
+    e descrição). Aqui isso não basta: numa fatura é normal passar o cartão
+    **duas vezes no mesmo dia, no mesmo lugar, pelo mesmo valor** — duas idas à
+    farmácia — e as duas linhas colidiriam numa só, com a segunda descartada
+    como duplicata. Perder lançamento em silêncio é exatamente o que este
+    leitor existe para não fazer.
+
+    O desempate é a ordem de aparição no documento, e é estável porque uma
+    fatura é documento fechado: baixada de novo, vem na mesma ordem, e a
+    reimportação reconhece tudo como já importado.
+    """
+    vistas: dict[tuple[str, Decimal], int] = {}
+    for bruta in brutas:
+        base = f"fatura|{bruta.data.isoformat()}|{bruta.descricao[:40]}"
+        chave = (base, bruta.valor)
+        ocorrencia = vistas[chave] = vistas.get(chave, 0) + 1
+        bruta.identificador = base if ocorrencia == 1 else f"{base}#{ocorrencia}"
+
+
+def _le_mercado_pago_fatura(linhas: list[str]) -> list[Bruta]:
+    referencia = _referencia_da_fatura(linhas)
+    if referencia is None:
+        raise ErroPDF(
+            "Reconheci a fatura do cartão Mercado Pago, mas não achei a data "
+            "de emissão nem a de vencimento — e sem uma delas não dá para "
+            "saber de que ano são as compras, porque na fatura a data vem só "
+            "como dia e mês."
+        )
+
+    achadas: list[Bruta] = []
+    pendente: tuple[int, int, list[str]] | None = None
+
+    def registrar(dia: int, mes: int, descricao: str, valor: Decimal) -> None:
+        quando = _data_da_fatura(dia, mes, referencia)
+        texto = " ".join(descricao.split())
+        if quando is None or not texto or valor == 0:
+            return
+        # Toda linha da fatura é compra, logo saída. Se a linha trouxer sinal
+        # negativo é estorno, e a conta se inverte sozinha.
+        achadas.append(Bruta(quando, texto, -valor))
+
+    for linha in linhas:
+        texto = linha.strip()
+        if not texto:
+            continue
+
+        if _FAT_CORTA.match(texto):
+            pendente = None
+            continue
+
+        if achado_data := _FAT_DATA.match(texto):
+            pendente = None
+            dia, mes = int(achado_data.group(1)), int(achado_data.group(2))
+            fecha = _FAT_FECHA.match(achado_data["resto"])
+            if fecha is None:
+                # Descrição comprida que quebrou: o valor vem adiante.
+                pendente = (dia, mes, [achado_data["resto"]])
+                continue
+            if (valor := para_decimal(fecha["valor"])) is not None:
+                registrar(dia, mes, fecha["resto"], valor)
+            continue
+
+        if pendente is None:
+            continue
+
+        fecha = _FAT_FECHA.match(texto)
+        if fecha is None:
+            pendente[2].append(texto)
+            continue
+
+        if (valor := para_decimal(fecha["valor"])) is not None:
+            dia, mes, partes = pendente
+            registrar(dia, mes, " ".join([*partes, fecha["resto"]]), valor)
+        pendente = None
+
+    _identificar_compras(achadas)
+    return achadas
+
+
+# --------------------------------------------------------------------------- #
 # Nubank — extrato da conta
 # --------------------------------------------------------------------------- #
 # Layout diferente em tudo: a data vem como "08 AGO 2026", e o **sentido** do
@@ -190,9 +339,27 @@ def _le_nubank(linhas: list[str]) -> list[Bruta]:
 # Escolha do perfil
 # --------------------------------------------------------------------------- #
 # A assinatura é procurada no texto inteiro, sem acento e em maiúsculas.
+# O nome é a frase inteira porque entra na mensagem de erro: "reconheci este
+# PDF como <nome>, mas não achei lançamento". Dois documentos do mesmo banco
+# convivem aqui, então "Mercado Pago" sozinho não diria qual deles.
+# O quarto campo diz se o documento é de cartão. Numa fatura toda linha é
+# compra no crédito — é o que o documento é — e sem essa marca a confirmação
+# recusaria tudo com `422`, porque o ADR-0002 exige `forma_pagamento=credito`
+# para saída em conta do tipo cartão.
 PERFIS = (
-    ("Mercado Pago", ("EXTRATO DE CONTA", "ID DA OPERACAO"), _le_mercado_pago),
-    ("Nubank", ("NUBANK.COM.BR",), _le_nubank),
+    (
+        "extrato do Mercado Pago",
+        ("EXTRATO DE CONTA", "ID DA OPERACAO"),
+        _le_mercado_pago,
+        False,
+    ),
+    (
+        "fatura do cartão Mercado Pago",
+        ("DETALHES DE CONSUMO", "MOVIMENTACOES"),
+        _le_mercado_pago_fatura,
+        True,
+    ),
+    ("extrato do Nubank", ("NUBANK.COM.BR",), _le_nubank, False),
 )
 
 
@@ -205,10 +372,10 @@ def _sem_acento(texto: str) -> str:
 
 def _perfil(texto: str):
     procuravel = _sem_acento(texto)
-    for nome, assinaturas, leitor in PERFIS:
+    for nome, assinaturas, leitor, no_credito in PERFIS:
         if all(a in procuravel for a in assinaturas):
-            return nome, leitor
-    return None, None
+            return nome, leitor, no_credito
+    return None, None, False
 
 
 def _texto_do_pdf(conteudo: bytes) -> list[str]:
@@ -257,21 +424,22 @@ def ler_pdf(conteudo: bytes) -> list[TransacaoExtrato]:
             "em OFX, CSV ou XLSX, que o banco costuma oferecer."
         )
 
-    nome, leitor = _perfil("\n".join(linhas))
+    nome, leitor, no_credito = _perfil("\n".join(linhas))
     if leitor is None:
         raise ErroPDF(
-            "Não reconheço o layout deste PDF. Cada banco organiza o extrato de "
-            "um jeito, e hoje sei ler os do Nubank e do Mercado Pago. Para os "
-            "outros, use OFX, CSV ou XLSX — são formatos feitos para serem "
-            "lidos, e o resultado é exato."
+            "Não reconheço o layout deste PDF. Cada banco organiza o documento "
+            "de um jeito, e hoje sei ler o extrato do Nubank, o extrato do "
+            "Mercado Pago e a fatura do cartão Mercado Pago. Para os outros, "
+            "use OFX, CSV ou XLSX — são formatos feitos para serem lidos, e o "
+            "resultado é exato."
         )
 
     brutas = leitor(linhas)
     if not brutas:
         raise ErroPDF(
-            f"Reconheci este PDF como extrato do {nome}, mas não encontrei "
-            "nenhum lançamento nele. Se o arquivo não estiver vazio, o layout "
-            "do banco pode ter mudado."
+            f"Reconheci este PDF como {nome}, mas não encontrei nenhum "
+            "lançamento nele. Se o arquivo não estiver vazio, o layout do "
+            "banco pode ter mudado."
         )
 
     return sorted(
@@ -298,6 +466,7 @@ def ler_pdf(conteudo: bytes) -> list[TransacaoExtrato]:
                 valor=abs(bruta.valor),
                 saida=bruta.valor < 0,
                 descricao=bruta.descricao,
+                no_credito=no_credito,
             )
             for bruta in brutas
         ),

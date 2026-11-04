@@ -893,6 +893,13 @@ interface TransacaoPrevia {
   tipo_sugerido: "entrada" | "saida";
   categoria_sugerida_id: number | null;
   categoria_sugerida_nome: string | null;
+  // Preenchida só quando a origem sabe a forma de pagamento. Hoje isso
+  // acontece num caso: a fatura de cartão, onde toda linha é compra no
+  // crédito por definição do documento — vem "credito". Extrato de conta
+  // devolve null e a escolha segue sendo do usuário.
+  // ATENÇÃO: quando vier preenchida, **mande de volta na confirmação**. Sem
+  // isso o `422` é garantido — ver a nota logo abaixo.
+  forma_pagamento_sugerida: "debito" | "credito" | "pix" | "dinheiro" | null;
   duplicado: boolean;        // já existe lançamento com este fitid — ignorado na confirmação, sem perguntar
   possivel_repetido: boolean; // mesma data+valor de um lançamento existente, fitid diferente — vai para a tela de conferência
   fora_do_ano: boolean;       // data fora do ano sendo editado
@@ -903,6 +910,27 @@ interface PreviaImportacao {
   ja_importadas: number;      // quantas já são `duplicado`
   transacoes: TransacaoPrevia[];
 }
+```
+
+### Importar fatura de cartão exige repassar `forma_pagamento_sugerida`
+
+Vale a pena isolar porque é a única forma de a importação de uma fatura
+falhar depois de a tela de revisão já ter aparecido bonitinha.
+
+O `ADR-0002` diz que saída numa conta do tipo cartão exige
+`forma_pagamento: "credito"`, e o padrão do campo é nulo. Então confirmar uma
+fatura inteira **sem** repassar a sugestão responde:
+
+```
+422  { "detail": "Esta forma de pagamento não se aplica a um cartão de crédito." }
+```
+
+A regra para a tela é a mesma já aplicada a `tipo_sugerido` e
+`categoria_sugerida_id`: o que vem sugerido volta na confirmação, a menos que
+a pessoa troque. O backend sugere, não impõe — ele não sobrescreve o que o
+usuário mandou.
+
+```
 ```
 
 ```ts
@@ -972,8 +1000,8 @@ sintético, e a deduplicação fica exata. Nada muda para a tela.
 PDF não tem layout padrão: cada banco organiza a página do seu jeito, e o
 arquivo guarda como desenhar, não o que cada pedaço significa. Por isso o
 backend tem **um leitor por banco**, e hoje conhece dois: **Nubank** e
-**Mercado Pago** (extrato de conta). Qualquer outro PDF é recusado com `422` e
-mensagem explicando.
+**Mercado Pago** (extrato de conta **e** fatura do cartão de crédito).
+Qualquer outro PDF é recusado com `422` e mensagem explicando.
 
 Isso é deliberado: um leitor genérico erraria calado no extrato do Mercado
 Pago, onde cada linha traz dois valores (o da transação e o saldo corrente) e
@@ -982,14 +1010,27 @@ pegar o errado importaria números plausíveis e falsos.
 Para a tela, três coisas:
 
 1. **Não prometer PDF em geral.** Sugestão de texto no seletor: "PDF funciona
-   para Nubank e Mercado Pago. Para outros bancos, use OFX, CSV ou XLSX."
+   para o extrato do Nubank, o extrato do Mercado Pago e a fatura do cartão
+   Mercado Pago. Para os outros, use OFX, CSV ou XLSX."
 2. **Destacar o `total_lidas` da prévia quando o formato for `pdf`.** Num PDF a
    maior parte do texto nunca foi transação, então linha não reconhecida é
    ignorada em silêncio — esse número é como a pessoa percebe que o extrato
    tinha 40 lançamentos e vieram 12.
-3. **Fatura de cartão não é lida**, só extrato de conta. Faturas escrevem a
-   data sem ano (`26/07`), e inferir o ano jogaria lançamento para o ano
-   errado.
+3. **A fatura do cartão Mercado Pago passou a ser lida em 04/11/2026**, e
+   nada muda no contrato: mesmo endpoint, mesmo `formato: "pdf"`, mesma
+   prévia. O perfil é escolhido pelo conteúdo do arquivo, não por um campo a
+   mais. Duas coisas para a tela saber:
+   - a **conta de destino** deve ser a do cartão de crédito, não a da conta
+     corrente — toda linha da fatura é compra no cartão;
+   - importar o extrato **e** a fatura do mesmo mês não duplica nada: as
+     compras ficam na conta do cartão e o `Pagamento de fatura` que aparece no
+     extrato é o pagamento delas. São lançamentos diferentes de propósito.
+
+   Parcelas vêm como lançamento único, com o texto `Parcela 1 de 3`
+   preservado na descrição. A importação **não** cria `CompraParcelada`: a
+   fatura mostra uma parcela do meio, e inventar as anteriores e as futuras a
+   partir dela erraria em silêncio. Vincular à compra parcelada continua
+   sendo ação manual.
 
 Erros com mensagem própria, prontos para exibir: PDF escaneado (imagem, sem
 texto), layout de banco desconhecido, e PDF protegido por senha de verdade.

@@ -535,3 +535,108 @@ class TestPDF:
     def test_arquivo_que_nao_e_pdf(self, cliente, ano):
         resposta = enviar(cliente, EXTRATO_CSV, "pdf")
         assert resposta.status_code == 422
+
+
+class TestFaturaDeCartaoNaImportacao:
+    """A fatura precisa de `forma_pagamento=credito` para ser gravada.
+
+    O ADR-0002 diz que saída numa conta do tipo cartão exige `credito`, e o
+    padrão de `forma_pagamento` é nulo. Sem alguém preencher, confirmar uma
+    fatura inteira responde `422` — a importação ia até a tela de revisão e
+    morria no último passo.
+
+    Quem preenche é o backend, porque é ele que sabe: numa fatura **toda**
+    linha é compra no crédito, por definição do documento. O extrato de conta
+    não sabe e continua devolvendo `null`, deixando a escolha com o usuário.
+    """
+
+    def fatura(self):
+        from tests.test_pdf import pdf
+
+        return pdf(
+            [
+                "Emitida em: 09/10/2026",
+                "Detalhes de consumo",
+                "Cartao Visa [************5501]",
+                "Data Movimentacoes Valor em R$",
+                "08/09 JR FITNESS CENTER R$ 120,00",
+                "01/10 SUBWAY R$ 76,50",
+                "Total R$ 196,50",
+            ]
+        )
+
+    def cartao(self, cliente):
+        return cliente.post(
+            "/contas",
+            json={
+                "nome": "MP Credito",
+                "tipo": "cartao_credito",
+                "dia_vencimento_fatura": 13,
+            },
+        ).json()
+
+    def test_a_previa_sugere_credito(self, cliente, ano):
+        linhas = enviar(cliente, self.fatura(), "pdf").json()["transacoes"]
+        assert {t["forma_pagamento_sugerida"] for t in linhas} == {"credito"}
+
+    def test_o_extrato_de_conta_nao_sugere_forma_nenhuma(self, cliente, ano):
+        """Só a fatura sabe. No extrato, a escolha continua sendo do usuário."""
+        linhas = enviar(cliente).json()["transacoes"]
+        assert all(t["forma_pagamento_sugerida"] is None for t in linhas)
+
+    def test_confirmar_seguindo_a_sugestao_grava(self, cliente, ano):
+        """O caminho inteiro, até o lançamento existir de verdade."""
+        cartao = self.cartao(cliente)
+        linhas = enviar(cliente, self.fatura(), "pdf").json()["transacoes"]
+
+        resposta = cliente.post(
+            "/anos/2026/importacao/confirmar",
+            json={
+                "transacoes": [
+                    {
+                        "fitid": t["fitid"],
+                        "data": t["data"],
+                        "valor": t["valor"],
+                        "tipo": t["tipo_sugerido"],
+                        "conta_id": cartao["id"],
+                        "forma_pagamento": t["forma_pagamento_sugerida"],
+                        "descricao": t["descricao"],
+                    }
+                    for t in linhas
+                ]
+            },
+        )
+        assert resposta.status_code == 201, resposta.text
+        assert resposta.json()["importadas"] == 2
+
+        gravados = cliente.get("/anos/2026/lancamentos").json()
+        assert {g["forma_pagamento"] for g in gravados} == {"credito"}
+        assert {g["conta_id"] for g in gravados} == {cartao["id"]}
+
+    def test_ignorar_a_sugestao_continua_sendo_recusado(self, cliente, ano):
+        """O backend sugere, não impõe — e a regra do ADR-0002 segue valendo.
+
+        Importa porque é o que diz ao frontend que a sugestão precisa ser
+        enviada de volta, e não só exibida.
+        """
+        cartao = self.cartao(cliente)
+        linhas = enviar(cliente, self.fatura(), "pdf").json()["transacoes"]
+
+        resposta = cliente.post(
+            "/anos/2026/importacao/confirmar",
+            json={
+                "transacoes": [
+                    {
+                        "fitid": t["fitid"],
+                        "data": t["data"],
+                        "valor": t["valor"],
+                        "tipo": t["tipo_sugerido"],
+                        "conta_id": cartao["id"],
+                        "descricao": t["descricao"],
+                    }
+                    for t in linhas
+                ]
+            },
+        )
+        assert resposta.status_code == 422
+        assert "cartão" in resposta.json()["detail"]

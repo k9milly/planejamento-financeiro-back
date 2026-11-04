@@ -162,6 +162,266 @@ class TestMercadoPago:
 
 
 # --------------------------------------------------------------------------- #
+# Mercado Pago: fatura do cartão (documento diferente do extrato)
+# --------------------------------------------------------------------------- #
+# Reproduz a estrutura da fatura de outubro/2026: resumo e propaganda cheios
+# de valores na primeira página, duas seções de cartão, cada uma fechando num
+# `Total`, e a data sem ano nas linhas de compra.
+#
+# A fixtura escreve "Cartao Visa" sem til porque a fonte embutida no helper
+# `pdf` não carrega todo acento. O corte de seção aceita as duas grafias, e o
+# caminho acentuado foi conferido contra a fatura real — ver o ADR-12.
+FATURA = pdf(
+    [
+        "Kamilly da Rosa",
+        "Emitida em: 09/10/2026",
+        "Essa e sua fatura de outubro",
+        "Total a pagar",
+        "R$ 1.348,43",
+        "Vence em",
+        "13/10/2026",
+        "Pagamento minimo",
+        "R$ 205,54",
+        "Resumo da fatura",
+        "Consumos de 09/09 a 08/10 R$ 1.348,43",
+        "Detalhes de consumo",
+        "Cartao Visa [************5501]",
+        "Data Movimentacoes Valor em R$",
+        "08/09 JR FITNESS CENTER R$ 120,00",
+        "08/09 RAIA4521 R$ 13,27",
+        "25/09 TikTok Shop *Tik Parcela 1 de 3 R$ 82,48",
+        "01/10 SUBWAY R$ 76,50",
+        "Total R$ 292,25",
+        "Cartao Visa [************4066]",
+        "Data Movimentacoes Valor em R$",
+        "26/07 MERCADOLIVRE*MERCADOLIVRE Parcela 3 de 4 R$ 7,78",
+        "06/10 Compra internacional em ANTHROPIC* CLAUDE SUB R$ 113,85",
+        "BRL 0 = USD 1 = R$ 0 BRL 110.00",
+        "Total R$ 121,63",
+    ]
+)
+
+
+class TestFaturaMercadoPago:
+    def test_le_so_as_compras(self):
+        assert len(ler_pdf(FATURA)) == 6
+
+    def test_a_soma_bate_com_os_totais_declarados(self):
+        """A conferência que de fato prova o leitor.
+
+        Contra a fatura real, a soma deu exatamente o "Total a pagar" que o
+        documento declara. Aqui a fixtura repete a prova em escala menor:
+        292,25 + 121,63, os dois totais por cartão.
+        """
+        total = sum(t.valor for t in ler_pdf(FATURA))
+        assert total == Decimal("292.25") + Decimal("121.63")
+
+    def test_a_linha_de_total_nao_vira_compra(self):
+        valores = [t.valor for t in ler_pdf(FATURA)]
+        assert Decimal("292.25") not in valores
+        assert Decimal("121.63") not in valores
+
+    def test_o_resumo_e_a_propaganda_da_primeira_pagina_ficam_de_fora(self):
+        """São os valores mais perigosos do documento.
+
+        `R$ 1.348,43` é o total a pagar e `R$ 205,54` o pagamento mínimo: dois
+        números grandes e plausíveis que um leitor genérico importaria como
+        compra. O corte é exigir que a linha **comece** com `dd/mm`.
+        """
+        valores = [t.valor for t in ler_pdf(FATURA)]
+        assert Decimal("1348.43") not in valores
+        assert Decimal("205.54") not in valores
+
+    def test_a_data_de_vencimento_nao_vira_compra(self):
+        """`13/10/2026` começa igual a uma data de compra: `13/10`.
+
+        Quem separa as duas é o espaço exigido depois do mês — numa data
+        completa vem `/`, não espaço. Sem essa exigência o vencimento viraria
+        compra levando junto o valor ao lado, que na fatura é o total a pagar.
+        """
+        conteudo = pdf(
+            [
+                "Emitida em: 09/10/2026",
+                "Detalhes de consumo",
+                "Data Movimentacoes Valor em R$",
+                "13/10/2026 R$ 1.348,43",
+                "08/09 JR FITNESS CENTER R$ 120,00",
+            ]
+        )
+        transacoes = ler_pdf(conteudo)
+        assert [t.valor for t in transacoes] == [Decimal("120.00")]
+        assert date(2026, 10, 13) not in [t.data for t in ler_pdf(FATURA)]
+
+    def test_descricao_sem_valor_nao_captura_o_total_seguinte(self):
+        """O caso estreito que a fronteira de seção existe para cobrir.
+
+        Uma compra cuja descrição quebrou e nunca fechou com valor deixa uma
+        transação pendente. Sem o corte em `Total`, ela captura o valor da
+        linha seguinte — o total do cartão — e inventa uma compra de centenas
+        de reais que nunca existiu.
+        """
+        conteudo = pdf(
+            [
+                "Emitida em: 09/10/2026",
+                "Detalhes de consumo",
+                "Data Movimentacoes Valor em R$",
+                "08/09 COMPRA QUE NAO FECHOU",
+                "Total R$ 292,25",
+                "01/10 SUBWAY R$ 76,50",
+            ]
+        )
+        transacoes = ler_pdf(conteudo)
+        assert [t.valor for t in transacoes] == [Decimal("76.50")]
+
+    def test_toda_compra_e_saida(self):
+        assert all(t.saida for t in ler_pdf(FATURA))
+
+    def test_a_linha_de_cambio_nao_vira_compra(self):
+        """Compra internacional traz uma linha de conversão junto."""
+        descricoes = " ".join(t.descricao for t in ler_pdf(FATURA))
+        assert "USD" not in descricoes
+
+
+class TestOAnoQueFaltaNaFatura:
+    """A fatura traz só dia e mês; o ano sai da data de emissão."""
+
+    def test_mes_anterior_fica_no_ano_da_fatura(self):
+        por_descricao = {t.descricao: t.data for t in ler_pdf(FATURA)}
+        assert por_descricao["JR FITNESS CENTER"] == date(2026, 9, 8)
+        assert por_descricao["SUBWAY"] == date(2026, 10, 1)
+
+    def test_parcela_de_meses_atras_nao_e_jogada_para_a_frente(self):
+        """Caso real: parcela 3 de 4, comprada em julho, cobrada em outubro."""
+        por_descricao = {t.descricao: t.data for t in ler_pdf(FATURA)}
+        assert por_descricao["MERCADOLIVRE*MERCADOLIVRE Parcela 3 de 4"] == date(
+            2026, 7, 26
+        )
+
+    def test_dezembro_numa_fatura_de_janeiro_volta_um_ano(self):
+        """O caso que o "usa o ano da fatura" ingênuo erra em onze meses."""
+        conteudo = pdf(
+            [
+                "Emitida em: 09/01/2027",
+                "Detalhes de consumo",
+                "Data Movimentacoes Valor em R$",
+                "20/12 CEIA DE NATAL R$ 300,00",
+                "05/01 SUPERMERCADO R$ 50,00",
+            ]
+        )
+        por_descricao = {t.descricao: t.data for t in ler_pdf(conteudo)}
+        assert por_descricao["CEIA DE NATAL"] == date(2026, 12, 20)
+        assert por_descricao["SUPERMERCADO"] == date(2027, 1, 5)
+
+    def test_sem_data_de_emissao_nem_vencimento_recusa_explicando(self):
+        conteudo = pdf(
+            [
+                "Detalhes de consumo",
+                "Data Movimentacoes Valor em R$",
+                "08/09 JR FITNESS CENTER R$ 120,00",
+            ]
+        )
+        with pytest.raises(ErroPDF, match="de que ano"):
+            ler_pdf(conteudo)
+
+
+class TestIdentificadorDaFatura:
+    """A fatura não traz identificador de operação, ao contrário do extrato."""
+
+    def test_duas_compras_identicas_no_mesmo_dia_continuam_duas(self):
+        """Duas idas à mesma farmácia no mesmo dia, pelo mesmo valor.
+
+        Com data, valor e descrição só, as duas viram a mesma chave e a
+        segunda some como duplicata — perda silenciosa de dinheiro.
+        """
+        conteudo = pdf(
+            [
+                "Emitida em: 09/10/2026",
+                "Detalhes de consumo",
+                "Data Movimentacoes Valor em R$",
+                "08/09 RAIA4521 R$ 13,27",
+                "08/09 RAIA4521 R$ 13,27",
+            ]
+        )
+        transacoes = ler_pdf(conteudo)
+        assert len(transacoes) == 2
+        assert len({t.fitid for t in transacoes}) == 2
+
+    def test_o_mesmo_arquivo_lido_duas_vezes_da_as_mesmas_chaves(self):
+        """O desempate por ordem só serve se for estável entre importações.
+
+        Se não fosse, reimportar a mesma fatura criaria tudo de novo em vez de
+        reconhecer como já importado.
+        """
+        primeira = [t.fitid for t in ler_pdf(FATURA)]
+        assert primeira == [t.fitid for t in ler_pdf(FATURA)]
+
+    def test_compras_diferentes_no_mesmo_dia_nao_colidem(self):
+        conteudo = pdf(
+            [
+                "Emitida em: 09/10/2026",
+                "Detalhes de consumo",
+                "Data Movimentacoes Valor em R$",
+                "08/09 RAIA4521 R$ 13,27",
+                "08/09 RAIA4521 R$ 40,00",
+            ]
+        )
+        assert len({t.fitid for t in ler_pdf(conteudo)}) == 2
+
+
+class TestLimitesConhecidosDaFatura:
+    def test_estorno_com_sinal_negativo_entra_como_entrada(self):
+        """Limite honesto: nenhuma fatura real da Kamilly tinha estorno ainda.
+
+        A regra é a mais barata que não inventa layout — se a linha trouxer
+        sinal negativo, a conta se inverte. Se o Mercado Pago marcar estorno
+        de outro jeito, este leitor vai tratar como compra, e isso está no
+        ADR-12 como limitação conhecida, não como defeito escondido.
+        """
+        conteudo = pdf(
+            [
+                "Emitida em: 09/10/2026",
+                "Detalhes de consumo",
+                "Data Movimentacoes Valor em R$",
+                "08/09 LOJA QUALQUER R$ 120,00",
+                "10/09 Estorno LOJA QUALQUER R$ -120,00",
+            ]
+        )
+        por_descricao = {t.descricao: t.saida for t in ler_pdf(conteudo)}
+        assert por_descricao["LOJA QUALQUER"] is True
+        assert por_descricao["Estorno LOJA QUALQUER"] is False
+
+    def test_descricao_que_quebra_em_duas_linhas(self):
+        conteudo = pdf(
+            [
+                "Emitida em: 09/10/2026",
+                "Detalhes de consumo",
+                "Data Movimentacoes Valor em R$",
+                "08/09 ESTABELECIMENTO COM NOME MUITO",
+                "COMPRIDO LTDA R$ 120,00",
+            ]
+        )
+        transacoes = ler_pdf(conteudo)
+        assert len(transacoes) == 1
+        assert transacoes[0].descricao == "ESTABELECIMENTO COM NOME MUITO COMPRIDO LTDA"
+
+
+class TestOsDoisDocumentosDoMesmoBanco:
+    """Extrato e fatura do Mercado Pago não podem ser confundidos."""
+
+    def test_a_fatura_nao_e_lida_como_extrato(self):
+        """O extrato tem ID de operação e saldo; a fatura, nenhum dos dois.
+
+        Lida pelo perfil errado a fatura não produziria nada — mas o risco de
+        verdade é o inverso silencioso: um perfil casando por acaso e
+        devolvendo lixo plausível.
+        """
+        assert all(t.fitid.startswith("fatura|") for t in ler_pdf(FATURA))
+
+    def test_o_extrato_nao_e_lido_como_fatura(self):
+        assert not any(t.fitid.startswith("fatura|") for t in ler_pdf(MERCADO_PAGO))
+
+
+# --------------------------------------------------------------------------- #
 # Nubank: o sentido vem do cabeçalho do dia, não da linha
 # --------------------------------------------------------------------------- #
 NUBANK = pdf(
