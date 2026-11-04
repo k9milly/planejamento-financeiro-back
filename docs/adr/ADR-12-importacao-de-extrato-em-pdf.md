@@ -121,16 +121,93 @@ tenta a senha vazia antes de desistir. Sem isso, o arquivo dela seria recusado
 com uma mensagem pedindo para "salvar uma cópia sem senha" que não faria
 sentido nenhum.
 
-### Fatura de cartão fica de fora
+### Fatura de cartão do Mercado Pago (revisto em 04/11/2026)
 
-Faturas escrevem a data sem o ano (`26/07`). Inferir o ano joga lançamento para
-o ano errado em silêncio. O que funciona é **extrato de conta** em PDF — que é
-o que a Kamilly usa para o Mercado Pago de qualquer forma.
+A versão original deste ADR deixava fatura de fora, com este argumento:
+"faturas escrevem a data sem o ano (`26/07`); inferir o ano joga lançamento
+para o ano errado em silêncio".
+
+O argumento estava certo sobre o risco e errado sobre a impossibilidade. A
+fatura **declara a própria data de emissão** (`Emitida em: 09/10/2026`) e a de
+vencimento. Com uma referência dentro do documento, achar o ano deixa de ser
+adivinhação e vira dedução, sustentada por um fato do negócio: **a compra é
+sempre anterior à emissão da fatura** — é o que a torna parte dela.
+
+A regra, então: tenta o ano da referência e, se a data cair no futuro, é do ano
+anterior. Isso resolve os dois casos reais de uma vez — a parcela de `26/07`
+numa fatura de outubro fica em julho, e um `20/12` numa fatura emitida em
+janeiro volta para dezembro do ano passado, que o "usa o ano da fatura"
+ingênuo jogaria onze meses para a frente. Sem data de emissão nem de
+vencimento no documento, o leitor **recusa** em vez de chutar.
+
+A reabertura veio de um caso concreto: a Kamilly tentou importar a fatura de
+outubro e recebeu a recusa de layout desconhecido — que foi o comportamento
+correto, e não um defeito.
+
+#### O que a fatura exige e o extrato não
+
+- **Só é transação a linha que começa com `dd/mm`.** A primeira página é
+  resumo e propaganda, cheia de valores grandes e plausíveis (total a pagar,
+  pagamento mínimo, simulações de parcelamento), e cada seção de cartão fecha
+  num `Total`. Nenhum começa com data.
+- **O espaço depois do mês separa `08/09 COMPRA` de `13/10/2026`.** Numa data
+  completa vem `/`, não espaço. (Um `(?!/)` foi escrito antes para isso e
+  removido depois: a mutação mostrou que era redundância, não proteção.)
+- **Dois cartões no mesmo PDF**, cada um com sua seção, a segunda atravessando
+  páginas. Ambos caem na mesma conta de destino escolhida na importação.
+- **Identificador próprio.** A fatura não traz `ID da operação`, e o sintético
+  (data + valor + descrição) não basta: passar o cartão duas vezes no mesmo
+  dia, no mesmo lugar, pelo mesmo valor é corriqueiro, e as duas linhas
+  colidiriam numa só. A chave é `fatura|data|descrição`, com um contador de
+  ocorrência quando repete. O desempate por ordem é estável porque fatura é
+  documento fechado: baixada de novo, vem na mesma ordem.
+
+#### Parcelamento não vira `CompraParcelada`
+
+As descrições trazem `Parcela 1 de 3`, `Parcela 3 de 4`, `Parcela 2 de 10`, e o
+sistema tem `CompraParcelada` (ADR-14). Mesmo assim, a importação **não** cria
+parcelamento: "Parcela 3 de 4" significa que 1 e 2 já passaram e a 4 ainda vem,
+e inventar esse passado e esse futuro a partir de uma linha solta erraria em
+silêncio. Cada parcela entra como lançamento único, com o texto preservado, e
+quem quiser ligar à `CompraParcelada` faz isso à mão.
+
+#### A prévia passa a sugerir `forma_pagamento`
+
+Achado testando o caminho completo, e não lendo o código: a prévia funcionava
+e a **confirmação** respondia `422`. O `ADR-0002` exige
+`forma_pagamento: "credito"` para saída em conta do tipo cartão, e o campo
+nasce nulo — a importação ia até a tela de revisão e morria no último passo.
+
+Dava para empurrar isso ao frontend ("ao importar numa conta de cartão,
+preencha credito"). A escolha foi o backend responder, porque é ele que sabe
+com certeza: numa fatura **toda** linha é compra no crédito — é o que o
+documento é. Regra espalhada por duas camadas é regra que uma delas esquece.
+
+`TransacaoPrevia` ganhou `forma_pagamento_sugerida`, nula em todo o resto.
+Dentro dos leitores a marca é um booleano (`TransacaoExtrato.no_credito`), e
+não a enumeração `FormaPagamento`: os leitores não importam nada de
+`app.models`, e trazer a enumeração até lá só para marcar um caso inverteria
+essa dependência. Quem traduz é o router.
+
+O backend **sugere e não impõe**: confirmar ignorando a sugestão continua
+recusado, e há teste para isso. É o que diz ao frontend que a sugestão precisa
+ser devolvida, e não só exibida.
+
+#### Limitação conhecida: estorno
+
+Nenhuma das faturas reais tinha estorno. A regra implementada é a mais barata
+que não inventa layout: se a linha trouxer valor negativo, vira entrada. Se o
+Mercado Pago marcar estorno de outro jeito — uma seção separada, uma palavra
+em vez de sinal — o leitor vai tratá-lo como compra. Fica registrado como
+limitação conhecida, e não como defeito escondido, porque a alternativa seria
+escrever de memória o formato de uma linha que ninguém viu.
 
 ## Consequências
 
 - Uma dependência nova (`pypdf`), pura e pequena. Nenhuma migração.
-- `PreviaImportacao`, `ConfirmarImportacao` e `ResultadoImportacao` não mudam.
+- `ConfirmarImportacao` e `ResultadoImportacao` não mudam. `TransacaoPrevia`
+  ganhou um campo opcional, `forma_pagamento_sugerida` — aditivo, nulo em
+  tudo que não seja fatura de cartão.
 - O identificador de deduplicação depende do perfil: o do Mercado Pago usa o
   `ID da operação` somado ao valor assinado; o do Nubank, que não traz
   identificador no PDF, cai no sintético como CSV e XLSX.
@@ -146,6 +223,17 @@ o que a Kamilly usa para o Mercado Pago de qualquer forma.
   | --- | --- | --- | --- |
   | Nubank | 3 | R$ 941,56 ✓ | R$ 941,52 ✓ |
   | Mercado Pago | 61 | R$ 3.199,44 ✓ | R$ 3.169,68 ✓ |
+
+  E, em 04/11/2026, contra o extrato de outubro e a fatura de outubro:
+
+  | | Transações | Entradas | Saídas |
+  | --- | --- | --- | --- |
+  | Mercado Pago, extrato | 40 | R$ 6.473,05 ✓ | R$ 7.208,36 ✓ |
+  | Mercado Pago, fatura | 16 | — | R$ 1.348,43 ✓ |
+
+  Na fatura a soma bate com o "Total a pagar" declarado, e também com a soma
+  dos dois totais por cartão (R$ 768,53 + R$ 579,90) — o que prova de duas
+  maneiras que as linhas de `Total` ficaram de fora.
 
   Os arquivos não entram no repositório — são dados financeiros dela. As
   fixturas dos testes reproduzem o **texto** que esses PDFs produzem.
@@ -163,4 +251,6 @@ o que a Kamilly usa para o Mercado Pago de qualquer forma.
   externo, e um extrato escaneado é raro quando o banco oferece OFX.
 - **Continuar convertendo PDF para CSV por fora** — foi o que ela tentou, e o
   resultado dependia do conversor usado. Ler o PDF direto remove essa variável.
-- **Inferir o ano de datas `DD/MM`** — adiada; ver acima.
+- **Inferir o ano de datas `DD/MM`** — adiada na primeira versão, feita em
+  04/11/2026 quando ficou claro que a própria fatura declara a data de
+  emissão. Dedução ancorada no documento, não chute.

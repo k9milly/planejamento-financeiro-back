@@ -36,6 +36,15 @@ class TransacaoExtrato:
     valor: Decimal
     saida: bool
     descricao: str
+    # A origem sabe que isto foi compra no cartão: é o caso da fatura, onde
+    # **toda** linha é crédito por definição do documento. Extrato de conta
+    # não sabe, e deixa em `False` para o usuário decidir na revisão.
+    #
+    # É um booleano e não a enumeração `FormaPagamento` de propósito: os
+    # leitores (OFX, CSV, XLSX, PDF) não importam nada de `app.models`, e
+    # trazer a enumeração para cá só para marcar um caso inverteria essa
+    # dependência. Quem traduz é o router.
+    no_credito: bool = False
 
 
 def para_decimal(bruto: str) -> Decimal | None:

@@ -27,6 +27,7 @@ from app.models import (
     Caixinha,
     Categoria,
     Conta,
+    FormaPagamento,
     Lancamento,
     RegraCategorizacao,
     TipoLancamento,
@@ -156,6 +157,9 @@ async def previa(
                 ),
                 categoria_sugerida_id=categoria.id if categoria else None,
                 categoria_sugerida_nome=categoria.nome if categoria else None,
+                forma_pagamento_sugerida=(
+                    FormaPagamento.CREDITO if transacao.no_credito else None
+                ),
                 duplicado=duplicado,
                 possivel_repetido=(
                     not duplicado

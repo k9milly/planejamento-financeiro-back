@@ -411,6 +411,14 @@ class TransacaoPrevia(BaseModel):
     tipo_sugerido: TipoLancamento
     categoria_sugerida_id: int | None
     categoria_sugerida_nome: str | None
+    # Preenchida só quando a **origem** sabe a forma de pagamento. Hoje isso
+    # acontece num caso: a fatura de cartão, onde toda linha é compra no
+    # crédito por definição do documento. Extrato de conta deixa `null`, e a
+    # escolha segue sendo do usuário na revisão (ADR-0001).
+    #
+    # Não é conveniência: sem ela a confirmação de uma fatura numa conta de
+    # cartão falha com `422`, porque o ADR-0002 exige `credito` ali.
+    forma_pagamento_sugerida: FormaPagamento | None = None
     # Já existe um lançamento com este fitid neste ano.
     duplicado: bool
     # Mesma data e mesmo valor de um lançamento existente, mas fitid diferente:
