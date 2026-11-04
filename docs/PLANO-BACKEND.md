@@ -816,12 +816,16 @@ depende de credenciais de sandbox.
 1. `POST /openfinance/connect-token` — credenciais só em ambiente, `409` sem
    espaço escolhido, `503` sem credencial, `502` quando a Pluggy falha.
    **Feito.**
-2. Tabelas `conexoes_bancarias` e `ContaConectada`/`contas_conectadas` (ambas
+2. Webhook público tratado como **aviso sem conteúdo**: confere o `itemId`
+   contra as nossas conexões, busca as transações na Pluggy com as nossas
+   credenciais e nunca grava nada do corpo recebido. Veio para antes das
+   tabelas porque o painel da Pluggy **exige** um endpoint não-localhost
+   registrado (`item/created`, `item/updated`, `transactions/created`,
+   `transactions/updated`, `transactions/deleted`) para a conta sair do
+   sandbox.
+3. Tabelas `conexoes_bancarias` e `ContaConectada`/`contas_conectadas` (ambas
    com `ComEspaco`, logo já isoladas pelo ADR-15) + rotas de listar, apontar
    para uma `Conta` nossa e desconectar.
-3. Webhook público tratado como **aviso sem conteúdo**: confere o `itemId`
-   contra as nossas conexões, busca as transações na Pluggy com as nossas
-   credenciais e nunca grava nada do corpo recebido.
 4. Transação da Pluggy vira `TransacaoExtrato` e entra na **prévia que já
    existe** (ADR-08/ADR-12) — dedupe, sugestão de categoria e confirmação em
    duas etapas de graça. Nada de gravação automática de `Lancamento`.
@@ -833,7 +837,14 @@ transação que chega pela Pluggy e pelo PDF do mesmo banco aparece uma vez só;
 desconectar cancela o item na Pluggy **antes** de apagar a nossa linha, e
 falhar na chamada deles não deixa a linha apagada.
 
-**Importante:** a fase 2 em diante não começa sem credenciais de sandbox. O
-ADR-18 registra por quê — o exemplo de código que motivou a tarefa usava uma
-classe e um método que não existem no SDK oficial, e escrever integração de
-memória é exatamente o que custou aquele retrabalho.
+**Importante:** antes de começar a fase 2, confirmar com a Pluggy se a due
+diligence para liberar dados reais aceita CPF. O painel pede "informações da
+empresa e do representante legal"; se CNPJ for obrigatório, o dado real nunca
+sai do sandbox e as fases 2 a 5 não têm destino. É uma mensagem de
+WhatsApp que evita o trabalho inteiro.
+
+Confirmado isso, as fases seguintes são escritas contra o conector sandbox
+(`Pluggy Bank`), que devolve dado sintético com a estrutura de campos da
+produção — nunca de memória. O exemplo que motivou esta tarefa usava uma
+classe e um método que não existem no SDK oficial, e foi exatamente isso que
+custou o retrabalho da fase 1.

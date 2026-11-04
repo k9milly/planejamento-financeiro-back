@@ -32,13 +32,50 @@ consequência prática de escolher esse caminho:
 - Fica uma dependência de terceiro no caminho de um dado sensível, e um custo
   por conexão ativa. É o preço de não ser banco.
 
-Um detalhe que **precisa ser confirmado no painel da Pluggy antes de
-depender dele**: a Pluggy oferece conectores por Open Finance regulado e
-conectores por outras vias (incluindo acesso direto à instituição). Quais
-bancos da Kamilly — Nubank e Mercado Pago — estão disponíveis por qual via, e
-em qual plano, é informação do painel deles, não suposição deste documento.
-Isto está anotado como pendência porque muda o que o usuário vê na tela de
-conectar, não só o preço.
+### Dado real não é um interruptor, é uma aprovação
+
+Conferido no painel da Pluggy em 04/11/2026, com a conta já criada — não
+deduzido da documentação:
+
+Uma aplicação nova nasce em **sandbox**, e conectar conta real de verdade é
+um pedido à parte ("Testar com dados reais" → "Liberar dados reais"). O
+acesso à produção tem três etapas obrigatórias, e uma quarta ao lado:
+
+1. personalizar a aplicação (logo/cor do widget);
+2. **conectar um item demo** — validar a integração ponta a ponta;
+3. **registrar webhooks** num endpoint **não-localhost**, cobrindo
+   `item/created`, `item/updated`, `transactions/created`,
+   `transactions/updated` e `transactions/deleted` (ou o evento `all`);
+4. **due diligence**: "informações da empresa e do representante legal para
+   revisão de conformidade".
+
+Duas consequências que mudam este ADR:
+
+**O webhook deixa de ser fase tardia e vira pré-requisito.** Estava planejado
+como fase 3, confortavelmente depois das tabelas. Não dá: sem endpoint
+público registrado, a conta não sai do sandbox. O backend já está no Fly com
+URL pública, então o obstáculo é só de ordem, não de infraestrutura.
+
+**A due diligence pode ser intransponível para um app pessoal.** Pedir
+"empresa" e "representante legal" sugere CNPJ. Se for obrigatório, o dado
+real do Mercado Pago da Kamilly **nunca** sai do sandbox, e todo o código das
+fases 2 a 5 fica sendo exercício. Isto precisa ser perguntado à Pluggy
+**antes** de a fase 2 começar — é a pergunta mais barata e mais decisiva
+desta integração, e está registrada aqui para não ser descoberta depois de
+pronta.
+
+### Qual via, para quais bancos
+
+Pela documentação deles (não pelo painel, então confirmar ao conectar): o
+Mercado Pago existe nas **duas** vias. Por Open Finance (pessoa física e
+jurídica) e por conector direto — este último só pessoa física, trazendo
+identidade, contas, transações e atualização automática, mas **não** cartão
+de crédito.
+
+A preferência é **Open Finance**, e o motivo não é técnico: no conector
+direto o usuário digita login e senha do banco dentro do widget; no Open
+Finance ele consente no ambiente do próprio banco. O custo da preferência é o
+consentimento expirar (ver fase 5).
 
 ### Por que não dá para adivinhar a API deles
 
@@ -59,7 +96,16 @@ relação, nomes iguais.
 
 ## Decisão
 
-### 1. Credencial da aplicação nunca sai do servidor
+### 1. Uma credencial só, e ela nunca sai do servidor
+
+Não existem "credenciais de sandbox" separadas — este documento chegou a
+dizer isso numa versão anterior, e estava errado. A aplicação tem **um**
+`clientId` e **um** `clientSecret`, e a URL é sempre `https://api.pluggy.ai`.
+O sandbox é um **conector falso** ("Pluggy Bank"), que o widget mostra quando
+o frontend passa `includeSandbox: true`. O que separa teste de produção é
+qual banco se escolhe na tela, mais a liberação descrita acima — não a chave.
+
+O `clientSecret` aparece **uma única vez**, na criação da aplicação no painel.
 
 O `clientId` e o `clientSecret` ficam em variável de ambiente
 (`PLUGGY_CLIENT_ID`, `PLUGGY_CLIENT_SECRET`), lidos por `app/config.py`,
@@ -230,28 +276,38 @@ desenhado com isso em mente.
 
 ## Fases
 
+A ordem mudou depois de olhar o painel: o webhook virou fase 2, porque é
+exigência para a conta sair do sandbox.
+
 | Fase | O que entra | Estado |
 | --- | --- | --- |
 | 1 | `POST /openfinance/connect-token`, credenciais em ambiente, erros `409`/`502`/`503` | escrito e testado, aguardando commit |
-| 2 | `ConexaoBancaria`, `ContaConectada`, migração, rotas de listar/apontar conta/desconectar | a fazer |
-| 3 | Webhook como aviso + busca das transações na Pluggy | a fazer |
+| 2 | Webhook público como aviso, respondendo `200` aos cinco eventos exigidos | a fazer |
+| 3 | `ConexaoBancaria`, `ContaConectada`, migração, rotas de listar/apontar conta/desconectar | a fazer |
 | 4 | `TransacaoExtrato` a partir da Pluggy, entrando na prévia existente | a fazer |
 | 5 | Renovação de consentimento (widget em modo *update*) e aviso de expiração | a fazer |
 
-A fase 2 em diante depende de **credenciais de sandbox**: sem elas não há
-como conferir a forma real das respostas de item, conta e transação, e este
-documento já mostra o que acontece quando alguém escreve integração de
-memória. Até lá, a fase 1 fica no ar devolvendo `503` em instalação sem
-credencial — de propósito, para quem não usa open finance continuar
-importando por arquivo normalmente.
+**A pergunta que vem antes da fase 2:** se a due diligence exigir CNPJ, o
+dado real nunca é liberado e as fases 2 a 5 não têm destino. Perguntar isso à
+Pluggy custa uma mensagem e economiza o trabalho inteiro.
+
+Respondida essa, a fase 2 em diante é escrita contra o **conector sandbox**
+(`Pluggy Bank`), que devolve dado sintético com a mesma estrutura de campos da
+produção. É o que permite mapear item, conta e transação sem tocar no dinheiro
+de verdade de ninguém — e, de quebra, sem que um teste de importação acabe
+gravando lançamento no espaço real da Kamilly.
+
+Enquanto nada disso acontece, a fase 1 fica no ar devolvendo `503` em
+instalação sem credencial — de propósito, para quem não usa open finance
+continuar importando por arquivo normalmente.
 
 ## Consequências
 
 - Uma dependência externa no caminho de um dado sensível, e um custo por
   conexão ativa. Mitigado em parte pela importação por arquivo continuar
   existindo: se a Pluggy sair do ar, encarecer ou mudar, o app não para.
-- Migração nova na fase 2 (duas tabelas).
-- Um endpoint público novo (webhook) na fase 3. A revisão de segurança e o
+- Migração nova na fase 3 (duas tabelas).
+- Um endpoint público novo (webhook) na fase 2. A revisão de segurança e o
   `ADR-17` (limite de tentativas) devem considerá-lo: ele não autentica
   usuário, então o limitador por IP vale para ele também.
 - Apagar uma `ConexaoBancaria` no nosso banco não cancela o item na Pluggy.
