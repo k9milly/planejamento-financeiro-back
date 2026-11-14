@@ -429,6 +429,38 @@ Se o ano corrente ainda não foi criado, devolve lista vazia.
 | `POST` | `/metas-poupanca` | alterado — `nome`, `wishlist_item_id`; não aposenta mais a anterior | idem |
 | `POST`/`DELETE` | `/anos/{ano}/compras-parceladas` | **novo** | ADR-14 |
 | `POST`/`PATCH` | `/anos/{ano}/lancamentos` | alterado — `compra_parcelada_id`, `numero_parcela` na saída | idem |
+| `GET` | `/anos/{ano}/lancamentos` | alterado — filtros `forma_pagamento`, `parcelado`, `valor_min`, `valor_max` | seção 23 |
+| `GET` | `/anos/{ano}/cartoes/{id}/fatura/{mes}` | alterado — `total_comprometido` | seção 24 |
+
+### Filtros do `GET /anos/{ano}/lancamentos` (13/11/2026)
+
+Quatro parâmetros novos, todos opcionais, todos combinados com "e" — e todos
+somados aos que já existiam (`mes`, `tipo`, `categoria_id`, `conta_id`):
+
+```
+forma_pagamento = credito | debito | pix | dinheiro | nao_informado
+parcelado       = true | false
+valor_min       = decimal como string, inclusivo
+valor_max       = decimal como string, inclusivo
+```
+
+Três regras que a tela precisa conhecer, porque duas delas devolvem `422`:
+
+- **`forma_pagamento` sempre restringe a saídas.** Só saída tem forma de
+  pagamento (ADR-0001). Mandar junto um `tipo` diferente de `saida` responde
+  `422` com "Forma de pagamento só existe em saídas." — em vez de uma lista
+  vazia, que a pessoa leria como "não há nada neste mês". A seletor da tela
+  deve travar o tipo em "Saída" ao escolher uma forma, mostrando o motivo.
+- **`nao_informado` é a saída com o campo nulo**, e fica **separado de
+  `debito`** ainda que o cálculo de saldo trate nulo como débito. É o que chega
+  de extrato importado sem forma: o filtro serve para achar o que falta
+  classificar.
+- **`valor_min` maior que `valor_max` responde `422`.** A comparação é com
+  `valor`, que é sempre positivo — o sinal vem do tipo.
+
+`parcelado=true` traz o que tem `compra_parcelada_id` **ou** `numero_parcela`:
+são as duas origens de parcela, o botão Parcelar (ADR-14) e a fatura
+importada (ADR-19).
 
 ---
 

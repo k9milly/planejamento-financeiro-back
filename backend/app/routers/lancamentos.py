@@ -2,11 +2,22 @@
 
 from __future__ import annotations
 
+from decimal import Decimal
+from typing import Literal
+
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session, joinedload
 
 from app.database import get_db
-from app.models import Ano, Caixinha, Categoria, Conta, Lancamento, TipoLancamento
+from app.models import (
+    Ano,
+    Caixinha,
+    Categoria,
+    Conta,
+    FormaPagamento,
+    Lancamento,
+    TipoLancamento,
+)
 from app.deps import obter_ano, obter_ano_editavel
 from app.services.caixinhas import exigir_caixinha, garantir_nao_negativas
 from app.schemas import (
@@ -20,15 +31,59 @@ from app.schemas import (
 router = APIRouter(prefix="/anos/{ano}/lancamentos", tags=["lançamentos"])
 
 
+# "Não informado" não é uma forma de pagamento: é a ausência dela. Mas na tela
+# é mais um item do mesmo seletor, então entra aqui junto das quatro reais.
+#
+# Fica **separado de `debito`** por decisão da Kamilly, ainda que o cálculo de
+# saldo trate nulo como débito (ADR-0001): este filtro serve para achar o que
+# falta classificar — tipicamente o que veio de extrato importado —, e juntar
+# os dois esconderia exatamente isso.
+NAO_INFORMADO = "nao_informado"
+FiltroFormaPagamento = Literal["credito", "debito", "pix", "dinheiro", NAO_INFORMADO]
+
+
 @router.get("", response_model=list[LancamentoOut], summary="Lista lançamentos")
 def listar(
     mes: int | None = Query(default=None, ge=1, le=12),
     tipo: TipoLancamento | None = None,
     categoria_id: int | None = None,
     conta_id: int | None = None,
+    forma_pagamento: FiltroFormaPagamento | None = Query(
+        default=None,
+        description=(
+            "Só existe em saídas. Combinado com um `tipo` diferente de "
+            "`saida`, responde 422."
+        ),
+    ),
+    parcelado: bool | None = Query(
+        default=None,
+        description=(
+            "Parcelas criadas pelo botão Parcelar e as importadas da fatura."
+        ),
+    ),
+    valor_min: Decimal | None = Query(default=None, ge=0),
+    valor_max: Decimal | None = Query(default=None, ge=0),
     ano_ref: Ano = Depends(obter_ano),
     db: Session = Depends(get_db),
 ) -> list[Lancamento]:
+    """Todos os filtros se combinam com "e"."""
+    if valor_min is not None and valor_max is not None and valor_min > valor_max:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="O valor mínimo não pode ser maior que o máximo.",
+        )
+    if (
+        forma_pagamento is not None
+        and tipo is not None
+        and tipo is not TipoLancamento.SAIDA
+    ):
+        # Recusar é melhor que devolver vazio: a combinação não tem resultado
+        # possível, e uma lista vazia pareceria "não há nada neste mês".
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="Forma de pagamento só existe em saídas.",
+        )
+
     consulta = (
         db.query(Lancamento)
         .options(joinedload(Lancamento.categoria), joinedload(Lancamento.conta))
@@ -47,6 +102,30 @@ def listar(
             (Lancamento.conta_id == conta_id)
             | (Lancamento.conta_destino_id == conta_id)
         )
+    if forma_pagamento is not None:
+        # **O `tipo == SAIDA` aqui não é redundante**, e é o detalhe que faz o
+        # filtro funcionar: entrada, transferência e guardado também têm
+        # `forma_pagamento` nulo, então `nao_informado` sem esta linha traria
+        # o extrato inteiro em vez das saídas por classificar.
+        consulta = consulta.filter(Lancamento.tipo == TipoLancamento.SAIDA)
+        consulta = consulta.filter(
+            Lancamento.forma_pagamento.is_(None)
+            if forma_pagamento == NAO_INFORMADO
+            else Lancamento.forma_pagamento == FormaPagamento(forma_pagamento)
+        )
+    if parcelado is not None:
+        # Dois campos porque são duas origens: `compra_parcelada_id` vem do
+        # botão Parcelar (ADR-14) e `numero_parcela` da fatura importada
+        # (ADR-19). Olhar só um deixaria metade das parcelas de fora.
+        e_parcela = (
+            Lancamento.compra_parcelada_id.is_not(None)
+            | Lancamento.numero_parcela.is_not(None)
+        )
+        consulta = consulta.filter(e_parcela if parcelado else ~e_parcela)
+    if valor_min is not None:
+        consulta = consulta.filter(Lancamento.valor >= valor_min)
+    if valor_max is not None:
+        consulta = consulta.filter(Lancamento.valor <= valor_max)
 
     return consulta.order_by(Lancamento.data, Lancamento.id).all()
 
