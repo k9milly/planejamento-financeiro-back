@@ -553,6 +553,12 @@ class FaturaOut(BaseModel):
     ano: int
     mes: int
     valor_em_aberto: Decimal
+    # Tudo que já está lançado neste cartão e ainda vai ser cobrado: a fatura
+    # do mês mais o que tem data posterior, **em qualquer ano**. É esse "em
+    # qualquer ano" que impede o número de sair do resumo anual, que para em
+    # dezembro — uma compra em 12x feita em novembro tem dez parcelas no ano
+    # seguinte. Ver seção 24 da spec.
+    total_comprometido: Decimal
     situacao: SituacaoGastoFixo
     lancamento_id: int | None
     # Espelha `Conta.dia_vencimento_fatura`. Vem junto para o calendário de

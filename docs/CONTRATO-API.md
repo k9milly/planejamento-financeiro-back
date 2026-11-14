@@ -139,11 +139,37 @@ interface FaturaOut {
   ano: number;
   mes: number;
   valor_em_aberto: string;      // Decimal como string, igual ao resto da API
+  total_comprometido: string;   // o que ainda vai ser cobrado, parcelas futuras incluidas
   situacao: 'pendente' | 'pago';
   lancamento_id: number | null; // preenchido se `situacao=pago`
   dia_vencimento: number;       // espelha `Conta.dia_vencimento_fatura`, pra conveniência do calendário
 }
 ```
+
+**`total_comprometido`** (13/11/2026) responde uma pergunta diferente de
+`valor_em_aberto`. A fatura do mes e "quanto devo ate o fim deste mes"; o
+comprometido e "quanto ja esta lancado e ainda vai ser cobrado":
+
+```
+total_comprometido =
+    valor_em_aberto
+  + saidas nesse cartao com data depois do ultimo dia do mes, em qualquer ano
+  - transferencias para esse cartao no mesmo intervalo
+```
+
+O **"em qualquer ano" e o ponto todo.** Este numero nao pode sair de
+`GET /anos/{ano}/resumo`: o resumo para em dezembro, e uma compra em 12x feita
+em novembro tem dez parcelas no ano seguinte. Pelo resumo, R$ 120,00 em 12x
+apareceriam como R$ 20,00 — subestimar a divida e o pior erro possivel aqui.
+
+Dois avisos para a tela:
+
+- **A fatura de um mes e cumulativa.** Com novembro em aberto, a fatura de
+  dezembro cobra as duas parcelas, nao so a de dezembro. Entao pagar dezembro
+  quita o cartao e zera o comprometido.
+- **O numero pode ser negativo**, quando se pagou adiantado mais do que se
+  deve. `valor_em_aberto` ja se comporta assim, e forcar zero num dos dois
+  faria os dois discordarem sobre o mesmo fato na mesma tela.
 
 ### `POST /anos/{ano}/cartoes/{cartao_id}/fatura/{mes}/pagar`
 

@@ -13,6 +13,7 @@ from datetime import date
 from decimal import Decimal
 
 from fastapi import APIRouter, Depends, HTTPException, Path, status
+from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session, joinedload
 
 from app.database import get_db
@@ -57,11 +58,15 @@ def obter(
         )
 
     registro = _registro(cartao.id, ano_ref.id, mes, db)
+    em_aberto = _valor_em_aberto(cartao.id, mes, ano_ref, db)
     return FaturaOut(
         cartao_id=cartao.id,
         ano=ano_ref.ano,
         mes=mes,
-        valor_em_aberto=_valor_em_aberto(cartao.id, mes, ano_ref, db),
+        valor_em_aberto=em_aberto,
+        total_comprometido=_total_comprometido(
+            cartao.id, mes, ano_ref, db, em_aberto
+        ),
         situacao=registro.situacao if registro else SituacaoGastoFixo.PENDENTE,
         lancamento_id=registro.lancamento_id if registro else None,
         dia_vencimento=cartao.dia_vencimento_fatura,
@@ -209,3 +214,62 @@ def _valor_em_aberto(cartao_id: int, mes: int, ano_ref: Ano, db: Session) -> Dec
     carteira = meses[mes - 1].por_cartao.get(cartao_id)
     saldo = carteira.saldo if carteira else Decimal("0.00")
     return -saldo
+
+
+def _total_comprometido(
+    cartao_id: int, mes: int, ano_ref: Ano, db: Session, em_aberto: Decimal
+) -> Decimal:
+    """A fatura do mês mais tudo que ainda vai ser cobrado neste cartão.
+
+    ## Por que não sai do resumo anual
+
+    `calcular_ano` é a conta certa para a fatura de um mês, e a errada para
+    esta: ela enxerga **um ano**, e para em dezembro. Uma compra em 12x feita
+    em novembro de 2026 tem dez parcelas em 2027, e o fechamento de dezembro
+    de 2026 não as vê. O número ficaria menor que a dívida real, que num app
+    de finanças é o erro que mais engana — o de subestimar o que se deve.
+
+    Então aqui é soma direta sobre `Lancamento`, sem passar pelo ano: pega
+    tudo com data **depois do último dia do mês consultado**, em qualquer ano.
+
+    ## Por que só saída e transferência
+
+    Num cartão, saída é compra (aumenta a dívida) e transferência de entrada é
+    pagamento de fatura (diminui). Os outros tipos não existem em conta de
+    cartão — `validar_conta_compativel` recusa entrada, rendimento e o resto
+    ali (ADR-0002). Então estes dois são o conjunto completo, não uma amostra.
+
+    ## O resultado pode ser negativo, e fica assim
+
+    Quem pagou adiantado mais do que deve tem crédito no cartão. `valor_em_
+    aberto` já devolve negativo nesse caso, e forçar zero aqui faria os dois
+    números da mesma tela discordarem sobre o mesmo fato.
+    """
+    ultimo_dia = date(ano_ref.ano, mes, calendar.monthrange(ano_ref.ano, mes)[1])
+
+    futuras = (
+        db.query(Lancamento)
+        .filter(
+            Lancamento.data > ultimo_dia,
+            or_(
+                and_(
+                    Lancamento.tipo == TipoLancamento.SAIDA,
+                    Lancamento.conta_id == cartao_id,
+                ),
+                and_(
+                    Lancamento.tipo == TipoLancamento.TRANSFERENCIA,
+                    Lancamento.conta_destino_id == cartao_id,
+                ),
+            ),
+        )
+        .all()
+    )
+
+    saldo_futuro = sum(
+        (
+            lanc.valor if lanc.tipo is TipoLancamento.SAIDA else -lanc.valor
+            for lanc in futuras
+        ),
+        Decimal("0.00"),
+    )
+    return em_aberto + saldo_futuro
