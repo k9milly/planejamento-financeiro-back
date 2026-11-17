@@ -162,6 +162,12 @@ correto, e não um defeito.
   ocorrência quando repete. O desempate por ordem é estável porque fatura é
   documento fechado: baixada de novo, vem na mesma ordem.
 
+> **Revisto pelo `ADR-19` em 13/11/2026:** a regra de **data** das linhas
+> "Parcela N de M" mudou. A parcela passa a cair no mês em que é cobrada
+> (data da compra + N−1 meses), igual ao botão Parcelar. O resto desta seção
+> continua valendo, inclusive a dedução do ano pela data de emissão e a chave
+> de dedupe ancorada na data **impressa**.
+
 #### Parcelamento não vira `CompraParcelada`
 
 As descrições trazem `Parcela 1 de 3`, `Parcela 3 de 4`, `Parcela 2 de 10`, e o

@@ -290,11 +290,25 @@ class TestOAnoQueFaltaNaFatura:
         assert por_descricao["JR FITNESS CENTER"] == date(2026, 9, 8)
         assert por_descricao["SUBWAY"] == date(2026, 10, 1)
 
-    def test_parcela_de_meses_atras_nao_e_jogada_para_a_frente(self):
-        """Caso real: parcela 3 de 4, comprada em julho, cobrada em outubro."""
+    def test_a_parcela_cai_no_mes_em_que_e_cobrada(self):
+        """Mudou de expectativa no ADR-19, e é bom entender o que mudou.
+
+        Antes esta linha era gravada em 26/07, a data que a fatura imprime —
+        a da compra original. Importando as quatro faturas desta compra em
+        4x, as quatro parcelas terminavam empilhadas em julho.
+
+        Agora a parcela 3 vai para setembro, que é quando ela é cobrada. O
+        que este teste protegia continua protegido, e está logo abaixo: o
+        **ano** segue deduzido da emissão, sem pular para a frente. Dedução
+        de ano e deslocamento de mês são regras diferentes; só a segunda é
+        nova.
+
+        A data impressa não some — ela continua sendo a chave de dedupe, o
+        que `tests/test_parcelas_importadas.py` cobre.
+        """
         por_descricao = {t.descricao: t.data for t in ler_pdf(FATURA)}
         assert por_descricao["MERCADOLIVRE*MERCADOLIVRE Parcela 3 de 4"] == date(
-            2026, 7, 26
+            2026, 9, 26
         )
 
     def test_dezembro_numa_fatura_de_janeiro_volta_um_ano(self):

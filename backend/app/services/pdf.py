@@ -47,6 +47,7 @@ from app.services.extrato import (
     identificador_sintetico,
     para_decimal,
 )
+from app.services.parcelas import data_da_parcela, ler_parcela
 
 
 class ErroPDF(ErroExtrato):
@@ -264,8 +265,40 @@ def _le_mercado_pago_fatura(linhas: list[str]) -> list[Bruta]:
             registrar(dia, mes, " ".join([*partes, fecha["resto"]]), valor)
         pendente = None
 
+    # **A ordem destas duas linhas é a decisão, não um detalhe.**
+    #
+    # O identificador sai da data **impressa** na linha, e por isso é
+    # calculado antes do deslocamento. A fatura de outubro de 2026 já foi
+    # importada em produção com a regra antiga; se a chave passasse a usar a
+    # data deslocada, reimportá-la geraria chaves novas e duplicaria tudo.
+    #
+    # Só a data gravada muda. Ver ADR-19, "O identificador da linha não pode
+    # mudar".
     _identificar_compras(achadas)
+    _deslocar_parcelas(achadas)
     return achadas
+
+
+def _deslocar_parcelas(brutas: list[Bruta]) -> None:
+    """Põe cada parcela no mês em que ela é cobrada (ADR-19).
+
+    A fatura imprime sempre a data da compra original, repetida em toda
+    fatura até a última parcela. Importando as quatro faturas de uma compra em
+    4x, as quatro parcelas terminariam empilhadas no mês da compra, e os meses
+    em que o dinheiro de fato sai ficariam vazios.
+
+    A regra é a mesma do botão Parcelar — literalmente a mesma função, em
+    `services/parcelas.py` —, e é o que faz os dois caminhos passarem a se
+    reconhecer: a parcela importada nasce com a data e o valor que o
+    parcelamento manual já tinha gerado, então a prévia a marca como "parece
+    o mesmo" em vez de deixar a pessoa lançar em dobro.
+    """
+    for bruta in brutas:
+        lido = ler_parcela(bruta.descricao)
+        if lido is None:
+            continue
+        numero, _total = lido
+        bruta.data = data_da_parcela(bruta.data, numero)
 
 
 # --------------------------------------------------------------------------- #

@@ -1,6 +1,6 @@
 # ADR-15 — Espaços financeiros compartilhados e isolamento de dados
 
-**Status:** proposto
+**Status:** implementado em 11/10/2026 (Fase 11 do PLANO-BACKEND).
 
 ## Contexto
 

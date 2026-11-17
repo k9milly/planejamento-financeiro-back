@@ -1,6 +1,6 @@
 # ADR-14 — Compra parcelada no cartão de crédito, com juros opcional
 
-**Status:** proposto
+**Status:** implementado em 25/09/2026 (Fase 10 do PLANO-BACKEND).
 
 ## Contexto
 
