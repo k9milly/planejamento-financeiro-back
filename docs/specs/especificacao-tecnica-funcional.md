@@ -1610,6 +1610,195 @@ endpoints é `401`/`422` como hoje.
 
 ---
 
+## 23. Filtros de lançamentos: forma de pagamento, conta, parceladas e valor
+
+Pedido da Kamilly em 13/11/2026: "selecionar as saídas por pix, por cartão de
+crédito, por dinheiro...". Hoje a tela de Lançamentos filtra por texto (no
+cliente), categoria e tipo (no servidor). A API já aceita `conta_id`, mas a
+tela não oferece esse filtro.
+
+Os filtros novos são feitos **no servidor**, como categoria e tipo já são. A
+busca por texto continua no cliente.
+
+```ts
+// GET /anos/{ano}/lancamentos — parâmetros de consulta, todos opcionais
+interface FiltrosLancamentos {
+  mes?: number;            // já existia
+  tipo?: TipoLancamento;   // já existia
+  categoria_id?: number;   // já existia
+  conta_id?: number;       // já existia na API; novo na tela
+  forma_pagamento?: "credito" | "debito" | "pix" | "dinheiro" | "nao_informado"; // novo
+  parcelado?: boolean;     // novo
+  valor_min?: string;      // novo — Decimal como string, inclusivo
+  valor_max?: string;      // novo — Decimal como string, inclusivo
+}
+```
+
+Regras (todos os filtros se combinam com "e"):
+
+- **`forma_pagamento` sempre restringe a saídas.** Só saída tem forma de
+  pagamento (ADR-0001). Sem essa restrição, `nao_informado` traria junto toda
+  entrada, transferência e guardado, porque todos têm o campo nulo. Mandar
+  `forma_pagamento` com um `tipo` diferente de `saida` responde `422`
+  ("Forma de pagamento só existe em saídas.").
+- **`nao_informado`** é a saída com `forma_pagamento` nulo. É o que chega de
+  extrato importado sem forma. Fica **separado** de `debito` (decisão da
+  Kamilly), mesmo que o saldo trate nulo como débito: o filtro mostra o que
+  falta classificar, e "Débito" mostra só o que é débito de fato.
+- **`parcelado=true`** traz lançamentos com `compra_parcelada_id` **ou**
+  `numero_parcela` preenchido. Isso pega as parcelas criadas pelo botão
+  Parcelar e as importadas da fatura (que passam a ter `numero_parcela`, ver
+  seção 26). `parcelado=false` traz o contrário.
+- **`valor_min` / `valor_max`** comparam com `valor`, que é sempre positivo
+  (o sinal vem do tipo). `valor_min` maior que `valor_max` responde `422`.
+- `conta_id` mantém o comportamento que já tem: numa transferência, conta
+  tanto a origem quanto o destino.
+
+### Na tela
+
+- Seletores novos: **Forma de pagamento** (Todas, Pix, Crédito, Débito,
+  Dinheiro, Não informado), **Conta/cartão** (Todas + as contas e cartões
+  ativos), **Só parceladas** (liga/desliga) e **Valor** (mínimo e máximo).
+- Escolher uma forma de pagamento coloca o tipo em "Saída" e o trava,
+  mostrando o motivo, em vez de deixar a pessoa montar uma combinação que
+  sempre volta vazia.
+- **No celular** (a Kamilly usa o app principalmente em pé, no celular), seis
+  controles numa linha não cabem. Abaixo do breakpoint `sm`, a busca continua
+  visível e os outros filtros vão para um botão **"Filtros"**, que abre um
+  painel de baixo para cima e mostra quantos filtros estão ativos (ex.:
+  "Filtros · 2"). O painel tem **"Limpar filtros"**.
+- O resumo do resultado diz o que foi filtrado. Ex.: "12 lançamentos · R$
+  340,00 em saídas". Esse resumo vale para a seleção atual, não para o mês
+  inteiro.
+
+---
+
+## 24. Fatura do cartão: URL corrigida, sem plano B, e o que cada tela mostra
+
+Ver `docs/adr/ADR-20-*.md`, seção "Contexto", para o diagnóstico completo
+(reproduzido rodando o backend em 13/11/2026).
+
+### O defeito
+
+O frontend busca a fatura em `/anos/{ano}/cartoes/{id}/fatura?mes={mes}`
+desde o primeiro commit, mas a rota é `/fatura/{mes}`, como a seção 8 desta
+spec e o `CONTRATO-API.md` sempre disseram. A chamada responde `404`, e a
+tela cai no plano B: o saldo do cartão em **dezembro**, vindo de
+`GET /anos/{ano}/resumo` (`por_cartao` é o fechamento do último mês do ano).
+Esse plano B causava dois sintomas:
+
+- **Parcela inteira na fatura atual.** Uma compra de R$ 60 em 2x aparecia
+  como R$ 60 "em aberto". O backend gera certo (R$ 30 em novembro, R$ 30 em
+  dezembro) e calcula certo (`valor_em_aberto` de novembro = R$ 30).
+- **"Precisei clicar 3 vezes para pagar."** O primeiro clique paga (a
+  mensagem verde aparece, a transferência é criada). Como a fatura nunca
+  carrega, a tela continua mostrando "pendente" e o botão "Pagar fatura", e o
+  valor cai de R$ 60 para R$ 30 em vez de zerar. Os cliques seguintes
+  devolvem o mesmo lançamento, porque o pagamento é idempotente de propósito,
+  e não duplicam nada.
+
+### Correção no frontend
+
+- `api.fatura` passa a chamar `/anos/{ano}/cartoes/{id}/fatura/{mes}`.
+- **Sem plano B com outro número.** A linha do cartão (Configurações) e o card
+  do Dashboard mostram "carregando" enquanto a fatura não chega, e "não foi
+  possível carregar" com "tentar de novo" se ela falhar. Nunca o saldo do
+  resumo, nunca `R$ 0,00`.
+- O diálogo "Pagar fatura" só habilita "Confirmar pagamento" com a fatura
+  carregada e `valor_em_aberto > 0`. Com zero, mostra "Nada em aberto neste
+  mês".
+- Cartões deixam de usar `resumo.porCartao` nas duas telas.
+
+### Mudança no backend: `total_comprometido`
+
+Decisão da Kamilly: o card do cartão no Dashboard mostra **a fatura do mês e o
+total comprometido**. O total comprometido **não pode** vir do resumo anual,
+porque ele só enxerga até dezembro. Uma compra em 12x feita em novembro de
+2026 tem dez parcelas em 2027, que o fechamento de dezembro de 2026 não vê.
+Por isso o número vem do backend, calculado entre anos:
+
+```ts
+interface FaturaOut {
+  cartao_id: number;
+  ano: number;
+  mes: number;
+  valor_em_aberto: string;      // já existia: o que deve até o fim do mês
+  total_comprometido: string;   // novo
+  situacao: "pago" | "pendente";
+  lancamento_id: number | null;
+  dia_vencimento: number;
+}
+```
+
+```
+total_comprometido =
+    valor_em_aberto
+  + soma das saídas nesse cartão com data depois do último dia do mês, em qualquer ano
+  − soma das transferências para esse cartão com data depois do último dia do mês, em qualquer ano
+```
+
+Na prática é "o que já está lançado e ainda vai ser cobrado", com as parcelas
+futuras incluídas. Respeita o isolamento por espaço do ADR-15 como qualquer
+outra consulta.
+
+### Dashboard, card de cada cartão
+
+```
+Cartão Mercado Pago
+Fatura de novembro          R$ 30,00
+pendente · vence dia 10
+Total comprometido: R$ 60,00 (inclui parcelas futuras)
+```
+
+- Mês: o selecionado no filtro de período, ou o mês atual em "Ano inteiro"
+  (mesma regra que Configurações já usa).
+- A linha "Total comprometido" só aparece quando ele é maior que a fatura do
+  mês. Sem parcela futura, os dois números seriam iguais e a linha não diz
+  nada.
+- Cada card é um componente próprio com o seu `useFatura`, pelo mesmo motivo
+  de `CartaoLinha` (regras dos hooks dentro de um `.map()`).
+
+---
+
+## 25. Mensagens (toasts): mais rápidas e com barra de tempo
+
+Pedido da Kamilly em 13/11/2026. Hoje (desde 25/09) o `Toaster` em
+`components/ui/sonner.tsx` usa 4 s para todas as mensagens, com o botão de
+fechar. São 82 chamadas de `toast.*` espalhadas pelo app.
+
+- **Duração por tipo**: sucesso e informação, **2,5 s**; erro e aviso,
+  **5 s** (erro precisa ser lido). Definida num lugar só, não chamada por
+  chamada.
+- **Barra de tempo**: uma linha fina no topo da mensagem, que começa na
+  largura toda e diminui até zero durante a duração dela. Verde no sucesso e
+  vermelha no erro, usando as cores do tema (`income` / `expense`), e neutra
+  nos outros tipos. Funciona no tema claro e no escuro.
+- **A barra pausa sempre que o tempo pausa.** O Sonner pausa o tempo quando o
+  mouse está em cima das mensagens, quando a pessoa toca/arrasta no celular e
+  quando a aba fica escondida. A barra precisa parar junto, senão ela chega
+  ao fim com a mensagem ainda na tela. Conferir na versão instalada
+  (`sonner@^2.0.7`) como ele sinaliza essa pausa, em vez de supor.
+- Quem pede menos movimento no sistema (`prefers-reduced-motion`) não vê a
+  barra animada. A duração continua a mesma.
+- O botão de fechar (X) continua.
+
+---
+
+## 26. Parcela importada da fatura cai mês a mês (ADR-19)
+
+Ver `docs/adr/ADR-19-*.md`. Mudança só no backend (`services/pdf.py`). A
+linha de fatura "Parcela N de M" passa a ser gravada com a data da compra
+mais `N − 1` meses, igual ao que o botão Parcelar gera, e com
+`numero_parcela = N`. O identificador usado para não duplicar continua sendo
+calculado com a data **impressa** na linha, para que reimportar uma fatura
+antiga não duplique nada.
+
+Na tela de importação nada muda de contrato. A prévia só passa a mostrar a
+data deslocada, e a marcar como "parece o mesmo" a parcela que já foi lançada
+pelo botão Parcelar.
+
+---
+
 ## Resumo — todos os endpoints usados por esta integração
 
 | Método | Rota | Usado por |
@@ -1617,10 +1806,10 @@ endpoints é `401`/`422` como hoje.
 | `POST` | `/auth/login` | Login |
 | `GET` | `/auth/eu` | Verificação de sessão na abertura do app |
 | `GET` | `/anos/{ano}/resumo` | Dashboard, Tabela Dinâmica, Mês-detalhe, saldo/fatura por conta (seção 8), total guardado da Wishlist (seção 10) |
-| `GET`/`POST`/`PATCH`/`DELETE` | `/anos/{ano}/lancamentos` | Lançamentos, Mês-detalhe |
+| `GET`/`POST`/`PATCH`/`DELETE` | `/anos/{ano}/lancamentos` | Lançamentos, Mês-detalhe. O `GET` ganha os filtros `forma_pagamento`, `parcelado`, `valor_min` e `valor_max` (seção 23) |
 | `GET`/`POST`/`PATCH`/`DELETE` | `/categorias` | Configurações → Categorias, e alimenta o `<select>` de categoria em Lançamentos e Gastos Fixos |
 | `GET`/`POST`/`PATCH`/`DELETE` | `/contas` | Configurações → Contas, e alimenta o `<select>` de conta em Lançamentos e Gastos Fixos |
-| `GET`/`POST`/`{mes}/pagar`/`{mes}/desfazer` | `/anos/{ano}/cartoes/{cartao_id}/fatura` | Botão "Pagar fatura" em Configurações → Contas |
+| `GET {mes}`/`POST {mes}/pagar`/`POST {mes}/desfazer` | `/anos/{ano}/cartoes/{cartao_id}/fatura/{mes}` | Botão "Pagar fatura" em Configurações → Contas e card do cartão no Dashboard. O mês vai **no caminho**, não em `?mes=` (seção 24). `FaturaOut` ganha `total_comprometido` |
 | `GET`/`POST`/`PATCH`/`DELETE`/`{gasto_id}/meses/{mes}/pagar`/`.../desfazer` | `/anos/{ano}/gastos-fixos` | Gastos Fixos, Calendário de Vencimentos |
 | `GET`/`POST`/`PATCH`/`DELETE`, `GET .../total` | `/anos/{ano}/wishlist` | Wishlist |
 | `PATCH` | `/auth/eu` | Perfil → nome, preferência de alerta por e-mail (seção 12, ADR-06) |
@@ -1629,7 +1818,7 @@ endpoints é `401`/`422` como hoje.
 | `POST` | `/anos/{ano}/importacao/previa`, `/anos/{ano}/importacao/confirmar` | Tela de importação de extrato — CSV/XLSX/OFX (seção 13, ADR-08). Já implementado para os três formatos e em produção; o caminho antigo `/ofx/...` responde `404` |
 | `GET`/`POST`/`DELETE` | `/regras` | Sugestão automática de categoria na importação (seção 13) — já existe, não tinha entrado nesta tabela antes por não ser consumido por nenhuma tela até agora |
 | `GET`/`POST`/`PATCH`/`DELETE` | `/contas/{conta_id}/caixinhas`, `POST .../transferir` | Tela nova de Investimentos (seção 15, ADR-10) |
-| `POST`/`DELETE` | `/anos/{ano}/compras-parceladas` | Parcelamento no crédito, novo endpoint (seção 18, ADR-14) — ainda não implementado |
+| `POST`/`DELETE` | `/anos/{ano}/compras-parceladas` | Parcelamento no crédito (seção 18, ADR-14) |
 | `GET`/`PATCH`/`DELETE` | `/espacos/{id}`, `/espacos/{id}/membros`, `/espacos/{id}/exportar` | Espaços financeiros compartilhados (seção 20, ADR-15) — novo |
 | `PATCH` | `/auth/espaco-atual` | Seletor de espaço (seção 20, ADR-15) — novo |
 | `DELETE` | `/auth/eu` | Apagar a própria conta (seção 20, ADR-15) — novo |
@@ -1649,3 +1838,8 @@ campos a mais em `/categorias` e `/auth/eu`, que já existiam). A seção 17
 nenhum novo. A seção 18 (ADR-14) é o único domínio desta rodada com
 endpoint genuinamente novo (`/anos/{ano}/compras-parceladas`). A seção 19
 (ajustes de UI) não toca em nenhum endpoint.
+
+Rodada de 13/11/2026 (seções 23 a 26): nenhum endpoint novo. O `GET` de
+lançamentos ganha quatro filtros, o `FaturaOut` ganha `total_comprometido`,
+e a URL que o frontend usava para buscar a fatura estava errada desde
+agosto. A rota sempre foi a desta tabela.

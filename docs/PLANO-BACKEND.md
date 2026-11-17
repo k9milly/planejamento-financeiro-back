@@ -848,3 +848,93 @@ Confirmado isso, as fases seguintes são escritas contra o conector sandbox
 produção — nunca de memória. O exemplo que motivou esta tarefa usava uma
 classe e um método que não existem no SDK oficial, e foi exatamente isso que
 custou o retrabalho da fase 1.
+
+---
+
+## Fase 15 — Filtros de lançamentos, total comprometido do cartão e parcela importada mês a mês (13/11/2026)
+
+**Leia antes:** seções 23, 24 e 26 da spec, e os ADRs 19 e 20. Esta fase
+**não** corrige o bug da fatura que precisava de três cliques. Ele é 100%
+frontend (a URL errada, ver seção 24), e o backend estava certo. Foi
+reproduzido em 13/11 com a suíte de testes deste repositório: compra de
+R$ 60 em 2x gera R$ 30 + R$ 30; `GET .../fatura/11` devolve R$ 30;
+`GET .../fatura?mes=11` (a URL do front) devolve `404`.
+
+**Três partes, independentes entre si (podem ser três PRs):**
+
+### 15a — Filtros no `GET /anos/{ano}/lancamentos` (seção 23)
+
+- Parâmetros novos: `forma_pagamento` (os quatro valores de `FormaPagamento`
+  mais `nao_informado`), `parcelado`, `valor_min`, `valor_max`.
+- `forma_pagamento` sempre restringe a `tipo = saida`. Com um `tipo`
+  diferente de `saida`, responde `422`. Sem essa restrição, `nao_informado`
+  traria toda entrada e transferência, porque todas têm o campo nulo.
+- `nao_informado` é `forma_pagamento IS NULL` (com `tipo = saida`), separado
+  de `debito`.
+- `parcelado=true` é `compra_parcelada_id IS NOT NULL OR numero_parcela IS NOT
+  NULL`.
+- `valor_min > valor_max` responde `422`.
+
+**Testes:** cada filtro sozinho; combinações; `nao_informado` não traz
+entrada nem transferência; `forma_pagamento` + `tipo=entrada` dá `422`;
+`parcelado` pega a parcela gerada pelo botão Parcelar **e** a importada da
+fatura (depois da 15c).
+
+### 15b — `total_comprometido` no `FaturaOut` (seção 24)
+
+- Fatura do mês **mais** as saídas no cartão com data depois do último dia do
+  mês, **em qualquer ano**, **menos** as transferências para o cartão no mesmo
+  intervalo.
+- Não usar `calcular_ano` nem o resumo para isso. Eles param em dezembro, e
+  uma compra em 12x feita em novembro tem parcelas no ano seguinte. É uma soma
+  direta sobre `Lancamento`, filtrada por cartão e data, e o filtro de espaço
+  do ADR-15 continua valendo automaticamente.
+
+**Testes:** compra de R$ 60 em 2x em novembro → fatura de novembro R$ 30,
+total comprometido R$ 60; compra em 12x feita em novembro → o total inclui
+as parcelas de 2027; depois de pagar novembro → fatura R$ 0, total R$ 30.
+
+### 15c — Parcela importada da fatura cai mês a mês (ADR-19)
+
+- Mover `_datas_das_parcelas` de `routers/compras_parceladas.py` para um
+  módulo de serviço (ex. `services/parcelas.py`), sem mudar o comportamento, e
+  usar nos dois lugares.
+- Em `services/pdf.py`, linha de fatura com `Parcela N de M`: data = data da
+  compra (com o ano já deduzido pela regra atual) + `N − 1` meses, e
+  `numero_parcela = N`.
+- **O identificador da linha continua usando a data impressa**, não a data
+  deslocada. Senão, reimportar a fatura de outubro, que já está em produção,
+  duplicaria tudo.
+- `test_parcela_de_meses_atras_nao_e_jogada_para_a_frente` muda de
+  expectativa: 26/07 "Parcela 3 de 4" → 26/09. O ano continua protegido por
+  `test_dezembro_numa_fatura_de_janeiro_volta_um_ano`.
+
+**Testes novos:** reimportar a mesma fatura não duplica; a parcela importada
+aparece como "parece o mesmo" quando a mesma compra já foi lançada pelo
+botão Parcelar; 31/01 "Parcela 2 de 3" → último dia de fevereiro; parcela que
+atravessa a virada de ano.
+
+**Dados de produção:** a fatura de outubro de 2026 já foi importada com a
+regra antiga. **Não corrigir sozinho.** Levantar quantos lançamentos têm
+"Parcela N de M" com `N > 1` e mostrar a lista à Kamilly. Se ela quiser,
+escrever um script de correção com `--simular`, no mesmo padrão de
+`scripts/importar_planilha.py`.
+
+### Também nesta fase
+
+- **Script para exportar o `openapi.json`** (ADR-20), por exemplo
+  `python -m scripts.exportar_openapi caminho/openapi.json`. O frontend guarda
+  uma cópia desse arquivo para o teste de contrato. Rodar de novo sempre que
+  um endpoint mudar, e avisar a Kamilly para levar o arquivo para o front.
+- **Status dos ADRs:** 13, 14 e 15 estão implementados no código e continuam
+  marcados como "proposto". Atualizar para "implementado", com a data.
+- **Conferência só de leitura:** no banco de produção, confirmar que existe
+  **uma** transferência de pagamento para a fatura que a Kamilly pagou com
+  três cliques. A idempotência garante isso e há teste, mas vale ver no dado
+  real.
+
+## Fora desta rodada (registrado, não tarefa)
+
+- **Dia de fechamento do cartão.** Sem ele, uma compra feita depois do
+  fechamento cai na fatura do mês errado em relação ao banco. Vale um ADR
+  próprio quando for pedido, como o ADR-0003 já previa.
