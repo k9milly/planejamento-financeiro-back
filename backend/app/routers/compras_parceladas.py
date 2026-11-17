@@ -36,6 +36,7 @@ from app.models import (
     TipoConta,
     TipoLancamento,
 )
+from app.services.parcelas import datas_das_parcelas
 from app.schemas import CompraParceladaCriar, CompraParceladaOut, FormaPagamento
 
 router = APIRouter(prefix="/anos/{ano}/compras-parceladas", tags=["compras parceladas"])
@@ -88,22 +89,6 @@ def _valores_das_parcelas(comum: Decimal, total: Decimal, quantidade: int) -> li
     """
     valores = [comum] * (quantidade - 1)
     return valores + [total - sum(valores, Decimal("0"))]
-
-
-def _datas_das_parcelas(primeira: date, quantidade: int) -> list[date]:
-    """Uma por mês, a partir da primeira, no mesmo dia.
-
-    Dia que não existe no mês de destino cai no último dia dele — mesmo
-    tratamento que `gastos_fixos.py` já dá ao vencimento (dia 31 em fevereiro).
-    """
-    datas = []
-    for passo in range(quantidade):
-        mes_total = primeira.month - 1 + passo
-        ano = primeira.year + mes_total // 12
-        mes = mes_total % 12 + 1
-        ultimo_dia = calendar.monthrange(ano, mes)[1]
-        datas.append(date(ano, mes, min(primeira.day, ultimo_dia)))
-    return datas
 
 
 def _garantir_anos(datas: list[date], db: Session) -> dict[int, Ano]:
@@ -181,7 +166,7 @@ def criar(
         )
 
     valor_parcela, valor_total = calcular(dados)
-    datas = _datas_das_parcelas(dados.data_primeira_parcela, dados.numero_parcelas)
+    datas = datas_das_parcelas(dados.data_primeira_parcela, dados.numero_parcelas)
     anos = _garantir_anos(datas, db)
 
     compra = CompraParcelada(

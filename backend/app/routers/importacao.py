@@ -46,6 +46,7 @@ from app.services.caixinhas import (
 )
 from app.services.extrato import ErroExtrato, TransacaoExtrato
 from app.services.ofx import ler_ofx
+from app.services.parcelas import ler_parcela
 from app.services.pdf import ler_pdf
 from app.services.tabular import ler_csv, ler_xlsx
 
@@ -69,6 +70,17 @@ def normalizar(texto: str) -> str:
     """Maiúsculas e sem acento, para casar regras independente de digitação."""
     sem_acento = unicodedata.normalize("NFKD", texto)
     return "".join(c for c in sem_acento if not unicodedata.combining(c)).upper()
+
+
+def _numero_da_parcela(descricao: str) -> int | None:
+    """`N` de "Parcela N de M" na descrição, ou `None`.
+
+    Vale para qualquer origem, não só a fatura em PDF: um CSV cuja descrição
+    traga o mesmo texto descreve a mesma coisa, e marcá-lo como parcela é
+    verdade. O campo serve ao filtro `parcelado` do `GET` de lançamentos.
+    """
+    lido = ler_parcela(descricao)
+    return lido[0] if lido else None
 
 
 def _sugerir_categoria(
@@ -238,6 +250,13 @@ def confirmar(
                 descricao=item.descricao,
                 fitid=item.fitid,
                 caixinha_id=item.caixinha_id,
+                # Deduzido da descrição, e não recebido do frontend: a fatura
+                # escreve "Parcela 3 de 4" na própria linha, e o contrato da
+                # importação não muda por causa disto (seção 26). O preço é
+                # que apagar esse texto na revisão perde o número da parcela
+                # — o lançamento continua certo em valor e data, só sai do
+                # filtro "só parceladas".
+                numero_parcela=_numero_da_parcela(item.descricao),
             )
         )
         fitids.add(item.fitid)

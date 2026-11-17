@@ -1,6 +1,6 @@
 # ADR-13 — Metas de poupança viram lista (várias simultâneas) e podem vincular a um item da wishlist
 
-**Status:** proposto
+**Status:** implementado em 25/09/2026 (Fase 9 do PLANO-BACKEND).
 
 ## Contexto
 
